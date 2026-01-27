@@ -1,0 +1,12 @@
+# API keys - never commit
+keys.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs
+*.log
