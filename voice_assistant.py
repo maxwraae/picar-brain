@@ -12,6 +12,10 @@ Hardened with:
 - Wake word detection (say "Hey Jarvis" to activate)
 """
 
+# Patch os.getlogin() for systemd (no TTY available)
+import os
+os.getlogin = lambda: "pi"
+
 from openai import OpenAI
 import subprocess
 import json
