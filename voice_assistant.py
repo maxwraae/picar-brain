@@ -564,7 +564,7 @@ def listen_for_wake_word(timeout=None):
     print("👂 Lyssnar efter 'Jarvis'...")
 
     try:
-        rec = PvRecorder(device_index=-1, frame_length=porcupine.frame_length)
+        rec = PvRecorder(device_index=0, frame_length=porcupine.frame_length)
         rec.start()
         start_time = time.time()
 
