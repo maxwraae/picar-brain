@@ -26,6 +26,18 @@ import signal
 import numpy as np
 from keys import OPENAI_API_KEY
 
+# ============== SIGNAL HANDLING ==============
+
+shutdown_requested = False
+
+def handle_shutdown(signum, frame):
+    global shutdown_requested
+    print("\n🛑 Shutdown signal received...")
+    shutdown_requested = True
+
+signal.signal(signal.SIGTERM, handle_shutdown)
+signal.signal(signal.SIGINT, handle_shutdown)
+
 # Wake word detection (Picovoice Porcupine)
 import pvporcupine
 from pvrecorder import PvRecorder
@@ -52,11 +64,95 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # Piper TTS model path (Swedish)
 PIPER_MODEL = "/home/pi/.local/share/piper/sv_SE-nst-medium.onnx"
 
-# Microphone configuration
-MIC_DEVICE = "plughw:3,0"
-
 # Speaker configuration - use robothat device which is configured in system
 SPEAKER_DEVICE = "robothat"
+
+# ============== USB MICROPHONE AUTO-DETECTION ==============
+
+def find_usb_mic_arecord():
+    """
+    Find USB microphone card number using arecord -l.
+    Returns: "plughw:X,0" where X is the card number, or None if not found.
+    """
+    try:
+        result = subprocess.run(
+            "arecord -l",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0:
+            return None
+
+        # Parse output looking for USB device
+        # Format: "card 3: Device [USB Audio Device], device 0: USB Audio [USB Audio]"
+        for line in result.stdout.split('\n'):
+            if 'card' in line.lower() and 'usb' in line.lower():
+                # Extract card number
+                parts = line.split(':')
+                if len(parts) > 0:
+                    card_part = parts[0]  # "card 3"
+                    words = card_part.split()
+                    for i, word in enumerate(words):
+                        if word.lower() == 'card' and i + 1 < len(words):
+                            card_num = words[i + 1].rstrip(',')
+                            device = f"plughw:{card_num},0"
+                            print(f"✓ Found USB mic (arecord): {device}")
+                            return device
+
+        return None
+
+    except Exception as e:
+        print(f"⚠️ Error detecting USB mic with arecord: {e}")
+        return None
+
+
+def find_usb_mic_pvrecorder():
+    """
+    Find USB microphone device index for PvRecorder.
+    Returns: device index (int) or None if not found.
+    """
+    try:
+        devices = PvRecorder.get_available_devices()
+
+        # Search for USB in device name
+        for idx, device_name in enumerate(devices):
+            if 'usb' in device_name.lower():
+                print(f"✓ Found USB mic (PvRecorder): index {idx} - {device_name}")
+                return idx
+
+        return None
+
+    except Exception as e:
+        print(f"⚠️ Error detecting USB mic with PvRecorder: {e}")
+        return None
+
+
+# Auto-detect USB microphone
+MIC_DEVICE = find_usb_mic_arecord()
+if MIC_DEVICE is None:
+    # Fallback to common indices
+    print("⚠️ USB mic not found via arecord, trying common card numbers...")
+    for card_num in [0, 3, 2, 1]:
+        test_device = f"plughw:{card_num},0"
+        # Quick test if device exists
+        test = subprocess.run(
+            f"arecord -D {test_device} -d 0.1 -f S16_LE -r 16000 -c 1 /tmp/test_mic.wav 2>/dev/null",
+            shell=True,
+            timeout=2
+        )
+        if test.returncode == 0:
+            MIC_DEVICE = test_device
+            print(f"✓ Using fallback mic device: {MIC_DEVICE}")
+            break
+
+    if MIC_DEVICE is None:
+        MIC_DEVICE = "plughw:0,0"  # Last resort fallback
+        print(f"⚠️ Using default fallback: {MIC_DEVICE}")
+else:
+    print(f"✓ Microphone configured: {MIC_DEVICE}")
 
 # Enable robot_hat speaker switch
 os.popen("pinctrl set 20 op dh")
@@ -442,6 +538,162 @@ def chat_with_gpt(user_message):
 
     return "Jag kan inte tänka just nu, försök igen!", []
 
+# ============== STARTUP SELF-TEST ==============
+
+def startup_self_test():
+    """
+    Test all critical components before starting the main loop.
+    Returns: True if all tests pass, False if any fail
+
+    Tests:
+    - Microphone (record 1s, check file size)
+    - Speaker (play test tone)
+    - Piper TTS (generate test audio)
+    - OpenAI API (list models)
+    """
+    print("\n" + "=" * 50)
+    print("🔧 Startar självtest...")
+    print("=" * 50 + "\n")
+
+    test_results = []
+
+    # Test 1: Microphone
+    print("🎤 Testar mikrofon...", end=" ", flush=True)
+    try:
+        test_wav = "/tmp/picar_mic_test.wav"
+        result = subprocess.run(
+            f"arecord -D {MIC_DEVICE} -d 1 -f S16_LE -r 16000 -c 1 {test_wav}",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode == 0 and os.path.exists(test_wav):
+            size = os.path.getsize(test_wav)
+            if size > 1000:
+                print("✓")
+                test_results.append(True)
+            else:
+                print("✗ (fil för liten)")
+                test_results.append(False)
+        else:
+            print("✗ (inspelning misslyckades)")
+            test_results.append(False)
+
+    except subprocess.TimeoutExpired:
+        print("✗ (timeout)")
+        test_results.append(False)
+    except Exception as e:
+        print(f"✗ ({str(e)[:30]})")
+        test_results.append(False)
+
+    # Test 2: Piper TTS
+    print("🗣️  Testar Piper TTS...", end=" ", flush=True)
+    try:
+        test_text = "test"
+        test_tts_wav = "/tmp/picar_tts_test.wav"
+
+        # Write test text
+        with open("/tmp/picar_tts_test.txt", "w") as f:
+            f.write(test_text)
+
+        result = subprocess.run(
+            f'cat /tmp/picar_tts_test.txt | piper --model {PIPER_MODEL} --output_file {test_tts_wav}',
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode == 0 and os.path.exists(test_tts_wav):
+            size = os.path.getsize(test_tts_wav)
+            if size > 100:
+                print("✓")
+                test_results.append(True)
+            else:
+                print("✗ (fil för liten)")
+                test_results.append(False)
+        else:
+            print("✗ (generering misslyckades)")
+            test_results.append(False)
+
+    except subprocess.TimeoutExpired:
+        print("✗ (timeout)")
+        test_results.append(False)
+    except Exception as e:
+        print(f"✗ ({str(e)[:30]})")
+        test_results.append(False)
+
+    # Test 3: Speaker
+    print("🔊 Testar högtalare...", end=" ", flush=True)
+    try:
+        # Use the TTS file we just generated if it exists, otherwise create a short beep
+        if os.path.exists("/tmp/picar_tts_test.wav"):
+            test_audio = "/tmp/picar_tts_test.wav"
+        else:
+            # Fallback: create simple beep with sox if available
+            test_audio = "/tmp/picar_speaker_test.wav"
+            subprocess.run(
+                f"sox -n -r 16000 -c 1 {test_audio} synth 0.1 sine 440",
+                shell=True,
+                capture_output=True,
+                timeout=3
+            )
+
+        result = subprocess.run(
+            f'aplay -D {SPEAKER_DEVICE} {test_audio}',
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode == 0:
+            print("✓")
+            test_results.append(True)
+        else:
+            print("✗ (uppspelning misslyckades)")
+            test_results.append(False)
+
+    except subprocess.TimeoutExpired:
+        print("✗ (timeout)")
+        test_results.append(False)
+    except Exception as e:
+        print(f"✗ ({str(e)[:30]})")
+        test_results.append(False)
+
+    # Test 4: OpenAI API
+    print("🌐 Testar OpenAI API...", end=" ", flush=True)
+    try:
+        # Simple API call with short timeout
+        models = client.models.list()
+        if models:
+            print("✓")
+            test_results.append(True)
+        else:
+            print("✗ (ingen respons)")
+            test_results.append(False)
+
+    except Exception as e:
+        print(f"✗ ({str(e)[:30]})")
+        test_results.append(False)
+
+    # Summary
+    print("\n" + "=" * 50)
+    passed = sum(test_results)
+    total = len(test_results)
+
+    if all(test_results):
+        print(f"✅ Alla tester OK ({passed}/{total})")
+        print("=" * 50 + "\n")
+        return True
+    else:
+        print(f"❌ {total - passed} tester misslyckades ({passed}/{total})")
+        print("=" * 50 + "\n")
+        return False
+
+
 # ============== MAIN LOOP ==============
 
 def record_audio(duration=4):
@@ -553,6 +805,52 @@ def reset_car_safe():
         pass
 
 
+class WakeWordListener:
+    """Context manager for PvRecorder to ensure proper cleanup"""
+    def __init__(self, porcupine_instance):
+        self.porcupine = porcupine_instance
+        self.rec = None
+
+    def __enter__(self):
+        # Auto-detect USB mic for PvRecorder
+        device_idx = find_usb_mic_pvrecorder()
+        if device_idx is None:
+            # Fallback to common indices
+            print("⚠️ USB mic not found via PvRecorder, trying common indices...")
+            for idx in [0, 15, 1, 2]:
+                try:
+                    test_rec = PvRecorder(device_index=idx, frame_length=self.porcupine.frame_length)
+                    test_rec.delete()  # Just testing if it opens
+                    device_idx = idx
+                    print(f"✓ Using fallback PvRecorder index: {device_idx}")
+                    break
+                except:
+                    continue
+
+            if device_idx is None:
+                device_idx = 0  # Last resort
+                print(f"⚠️ Using default PvRecorder index: {device_idx}")
+
+        self.rec = PvRecorder(device_index=device_idx, frame_length=self.porcupine.frame_length)
+        self.rec.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.rec:
+            try:
+                self.rec.stop()
+            except:
+                pass
+            try:
+                self.rec.delete()
+            except:
+                pass
+        return False  # Don't suppress exceptions
+
+    def read(self):
+        return self.rec.read()
+
+
 def listen_for_wake_word(timeout=None):
     """
     Listen for wake word using Picovoice Porcupine.
@@ -564,24 +862,23 @@ def listen_for_wake_word(timeout=None):
     print("👂 Lyssnar efter 'Jarvis'...")
 
     try:
-        rec = PvRecorder(device_index=15, frame_length=porcupine.frame_length)
-        rec.start()
-        start_time = time.time()
+        with WakeWordListener(porcupine) as listener:
+            start_time = time.time()
 
-        while True:
-            if timeout and (time.time() - start_time) > timeout:
-                rec.stop()
-                rec.delete()
-                return False
+            while True:
+                # Check for shutdown signal
+                if shutdown_requested:
+                    return False
 
-            pcm = rec.read()
-            result = porcupine.process(pcm)
+                if timeout and (time.time() - start_time) > timeout:
+                    return False
 
-            if result >= 0:
-                print("✨ Jarvis!")
-                rec.stop()
-                rec.delete()
-                return True
+                pcm = listener.read()
+                result = porcupine.process(pcm)
+
+                if result >= 0:
+                    print("✨ Jarvis!")
+                    return True
 
     except Exception as e:
         print(f"⚠️ Wake word error: {e}")
@@ -602,6 +899,12 @@ def main():
     print("=" * 50)
     print()
 
+    # Run startup self-test
+    if not startup_self_test():
+        print("❌ Självtest misslyckades! Prova att starta om.")
+        speak("Jag har ett problem. Fråga pappa om hjälp.")
+        return  # Exit gracefully
+
     if porcupine:
         print(f"Säg 'Jarvis' för att prata, Ctrl+C för att avsluta")
         speak(f"Hej Leon! Jag är din robotbil. Säg Jarvis så lyssnar jag!")
@@ -616,7 +919,7 @@ def main():
     consecutive_failures = 0
     MAX_CONSECUTIVE_FAILURES = 5
 
-    while True:
+    while not shutdown_requested:
         try:
             # LED off = listening for wake word
             try:
