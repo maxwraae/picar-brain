@@ -1,0 +1,7 @@
+SpeechRecognition==3.10.0
+openai>=1.0.0
+pyaudio==0.2.13
+piper-tts==1.2.0
+openwakeword>=0.5.1
+onnxruntime>=1.16.0
+numpy
