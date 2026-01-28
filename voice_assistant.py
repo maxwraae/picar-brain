@@ -609,9 +609,12 @@ def main():
                     continue
                 # Reset failure counter on successful detection
                 consecutive_failures = 0
-                # Play acknowledgment sound
-                speak("Ja?")
-                # Small delay so "Ja?" doesn't get picked up by the recording
+                # Quick beep for immediate feedback
+                try:
+                    music.sound_play_threading('/home/pi/picar-brain/sounds/car-double-horn.wav')
+                except:
+                    pass
+                # Small delay before recording
                 time.sleep(0.3)
             else:
                 # Fallback: push to talk
