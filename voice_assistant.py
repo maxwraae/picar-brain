@@ -113,37 +113,29 @@ PERSONLIGHET:
 - Du är aldrig tråkig eller formell
 
 RÖRLIGHET:
-Du kan göra dessa saker:
-- forward: kör framåt
-- backward: kör bakåt
-- spin_right: snurra åt höger
-- spin_left: snurra åt vänster
-- dance: dansa (vicka fram och tillbaka)
-- nod: nicka med huvudet (säga ja)
-- shake_head: skaka på huvudet (säga nej)
-- stop: stanna
+Du kan göra dessa saker: forward, backward, spin_right, spin_left, dance, nod, shake_head, stop
 
 VIKTIGT:
 - Svara ALLTID på svenska
 - Var kortfattad (1-2 meningar) så Leon inte tröttnar
 - Föreslå roliga saker att göra tillsammans
-- Om Leon vill att du rör dig, inkludera actions i ditt svar
 
 SVARSFORMAT:
-Du måste svara med JSON i detta format:
-{
-  "answer": "Det du säger till Leon på svenska",
-  "actions": ["lista", "av", "actions"]
-}
+Ge ditt svar som vanlig text först.
+Om du vill röra dig, skriv ACTIONS: följt av kommaseparerade actions på sista raden.
 
 Exempel:
-{"answer": "Woohoo! Jag snurrar runt!", "actions": ["spin_right"]}
-{"answer": "Vill du att jag dansar? Det kan jag!", "actions": ["dance"]}
-{"answer": "Hej Leon! Vad kul att prata med dig!", "actions": ["nod"]}
-{"answer": "Nej det vill jag inte göra!", "actions": ["shake_head"]}
+Woohoo! Jag snurrar runt!
+ACTIONS: spin_right
 
-Om Leon bara pratar och inte vill att du rör dig:
-{"answer": "Vad intressant! Berätta mer!", "actions": []}
+Vill du att jag dansar? Det kan jag!
+ACTIONS: dance
+
+Hej Leon! Vad kul att prata med dig!
+ACTIONS: nod
+
+Om du inte vill röra dig, skippa ACTIONS-raden:
+Vad intressant! Berätta mer!
 """
 
 # Initialize conversation with system prompt
@@ -337,10 +329,37 @@ ACTIONS = {
 
 # ============== CHAT FUNCTION ==============
 
+# Sentence-ending punctuation for streaming
+SENTENCE_ENDINGS = (".", "!", "?", "。", "！", "？")
+
+def parse_actions(full_response):
+    """
+    Parse ACTIONS from the response.
+    Looks for 'ACTIONS: action1, action2' on the last line.
+    Returns: (text_without_actions, actions_list)
+    """
+    lines = full_response.strip().split('\n')
+    actions = []
+
+    # Check if last line contains ACTIONS:
+    if lines and lines[-1].strip().upper().startswith('ACTIONS:'):
+        action_line = lines[-1].strip()
+        # Extract actions after "ACTIONS:"
+        action_part = action_line.split(':', 1)[1].strip()
+        actions = [a.strip().lower() for a in action_part.split(',') if a.strip()]
+        # Remove the ACTIONS line from text
+        text = '\n'.join(lines[:-1]).strip()
+    else:
+        text = full_response.strip()
+
+    return text, actions
+
+
 def chat_with_gpt(user_message):
     """
-    Send message to GPT using Chat Completions API with retry logic
-    Returns: (answer_text, actions_list)
+    Send message to GPT using streaming API.
+    Speaks each sentence as it completes for real-time response.
+    Returns: (full_answer_text, actions_list)
     """
     for attempt in range(MAX_RETRIES):
         try:
@@ -354,39 +373,60 @@ def chat_with_gpt(user_message):
                     "content": user_message
                 })
 
-            # Call OpenAI Chat Completions (gpt-5-mini is a reasoning model)
+            # Call OpenAI with streaming
             response = client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-4o-mini",
                 messages=conversation_history,
-                reasoning_effort="low",  # Quick responses for a robot car
-                verbosity="low"  # Short answers for a kid
+                stream=True
             )
 
-            # Extract response
-            assistant_message = response.choices[0].message.content
+            # Collect the full response and speak sentence-by-sentence
+            sentence_buffer = ""
+            full_response = ""
 
-            # Parse JSON response
-            try:
-                parsed = json.loads(assistant_message)
-                answer = parsed.get("answer", "")
-                actions = parsed.get("actions", [])
-            except json.JSONDecodeError:
-                # Fallback if GPT doesn't return proper JSON
-                print("⚠️ GPT svarade inte med JSON, använder raw text")
-                answer = assistant_message
-                actions = []
+            for chunk in response:
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+                if not delta.content:
+                    continue
+
+                # Add token to buffer
+                token = delta.content
+                sentence_buffer += token
+                full_response += token
+
+                # Check if we have a complete sentence
+                if sentence_buffer.rstrip().endswith(SENTENCE_ENDINGS):
+                    sentence = sentence_buffer.strip()
+                    # Don't speak the ACTIONS line
+                    if not sentence.upper().startswith('ACTIONS:'):
+                        print(f"💬 {sentence}")
+                        speak(sentence)
+                    sentence_buffer = ""
+
+            # Speak any remaining text (if it doesn't end with punctuation)
+            if sentence_buffer.strip():
+                remaining = sentence_buffer.strip()
+                if not remaining.upper().startswith('ACTIONS:'):
+                    print(f"💬 {remaining}")
+                    speak(remaining)
+
+            # Parse actions from full response
+            answer_text, actions = parse_actions(full_response)
 
             # Add assistant response to history
             conversation_history.append({
                 "role": "assistant",
-                "content": assistant_message
+                "content": full_response
             })
 
             # Keep conversation history reasonable (last 10 messages)
             if len(conversation_history) > 21:  # system + 10 pairs
                 conversation_history[:] = [conversation_history[0]] + conversation_history[-20:]
 
-            return answer, actions
+            return answer_text, actions
 
         except Exception as e:
             print(f"🔄 GPT-fel (försök {attempt + 1}/{MAX_RETRIES}): {e}")
@@ -640,19 +680,16 @@ def main():
 
             print(f"📝 Leon sa: {text}")
 
-            # Get GPT response
+            # Get GPT response (streaming - speaks sentence-by-sentence)
             print("💭 Tänker...")
             answer, actions = chat_with_gpt(text)
 
             # Success - reset failure counter
             consecutive_failures = 0
 
-            print(f"🤖 Svar: {answer}")
+            # Note: Speaking already happened during streaming
             if actions:
                 print(f"🎬 Rörelser: {actions}")
-
-            # Speak the answer (never crash even if TTS fails)
-            speak(answer)
 
             # Execute actions (wrapped in safe handler)
             for action_name in actions:
