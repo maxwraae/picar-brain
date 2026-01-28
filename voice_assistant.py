@@ -412,7 +412,7 @@ def record_audio(duration=4):
                 time.sleep(AUDIO_DEVICE_RETRY_DELAY)
 
             result = subprocess.run(
-                f"arecord -D plughw:3,0 -d {duration} -f S16_LE -r 16000 -c 1 {wav_file}",
+                f"arecord -D {MIC_DEVICE} -d {duration} -f S16_LE -r 16000 -c 1 {wav_file}",
                 shell=True,
                 capture_output=True,
                 text=True,
