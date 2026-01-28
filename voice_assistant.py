@@ -22,9 +22,9 @@ import signal
 import numpy as np
 from keys import OPENAI_API_KEY
 
-# Wake word detection
-from openwakeword.model import Model
-from openwakeword import get_pretrained_model_paths
+# Wake word detection (Picovoice Porcupine)
+import pvporcupine
+from pvrecorder import PvRecorder
 
 # PiCar imports
 from picarx import Picarx
@@ -36,11 +36,10 @@ MAX_RETRIES = 3
 SUBPROCESS_TIMEOUT = 10  # seconds
 AUDIO_DEVICE_RETRY_DELAY = 0.5  # seconds
 
-# Wake word configuration
-# Change this to your custom model path when ready (e.g., "/home/pi/albert_einstein.onnx")
-WAKE_WORD_MODEL = "hey_jarvis"  # Pre-trained model name
-WAKE_WORD_THRESHOLD = 0.5  # Detection threshold (0-1)
-WAKE_WORD_CHUNK_SIZE = 1280  # Samples per chunk at 16kHz
+# Wake word configuration (Picovoice)
+# Get free access key from https://console.picovoice.ai
+PICOVOICE_ACCESS_KEY = ""  # Set in keys.py or here
+WAKE_WORD = "jarvis"  # Built-in: alexa, americano, blueberry, bumblebee, computer, grapefruit, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
 
 # ============== CONFIG ==============
 
@@ -74,21 +73,30 @@ except Exception as e:
 music = Music()
 led = Pin('LED')
 
-# Initialize wake word model
+# Initialize wake word (Picovoice Porcupine)
+# Try to get access key from keys.py
 try:
-    # Get path to hey_jarvis model
-    model_paths = [p for p in get_pretrained_model_paths() if WAKE_WORD_MODEL.replace('_', '') in p.lower().replace('_', '')]
-    if not model_paths:
-        raise ValueError(f"Model '{WAKE_WORD_MODEL}' not found in pretrained models")
-    oww_model = Model(wakeword_model_paths=model_paths)
-    # Get the actual model name (key in predictions dict)
-    WAKE_WORD_NAME = list(oww_model.models.keys())[0]
-    print(f"✓ Wake word model loaded: {WAKE_WORD_NAME}")
-except Exception as e:
-    print(f"✗ Failed to load wake word model: {e}")
-    print("  Falling back to push-to-talk mode")
-    oww_model = None
-    WAKE_WORD_NAME = None
+    from keys import PICOVOICE_ACCESS_KEY as _pk
+    if _pk:
+        PICOVOICE_ACCESS_KEY = _pk
+except ImportError:
+    pass
+
+porcupine = None
+recorder = None
+if PICOVOICE_ACCESS_KEY:
+    try:
+        porcupine = pvporcupine.create(
+            access_key=PICOVOICE_ACCESS_KEY,
+            keywords=[WAKE_WORD]
+        )
+        print(f"✓ Wake word ready: '{WAKE_WORD}'")
+    except Exception as e:
+        print(f"✗ Failed to init wake word: {e}")
+        print("  Falling back to push-to-talk mode")
+else:
+    print("✗ No Picovoice access key - using push-to-talk mode")
+    print("  Get free key at https://console.picovoice.ai")
 
 # Conversation history for Chat Completions
 conversation_history = []
@@ -503,60 +511,36 @@ def reset_car_safe():
 
 def listen_for_wake_word(timeout=None):
     """
-    Continuously listen for wake word using arecord stream.
+    Listen for wake word using Picovoice Porcupine.
     Returns True when wake word detected, False on error/timeout.
-
-    Uses arecord to capture audio in small chunks and feeds to openwakeword.
     """
-    if oww_model is None:
-        # Fallback to push-to-talk
-        return True
+    if porcupine is None:
+        return True  # Fallback to push-to-talk
 
-    print("👂 Lyssnar efter wake word...")
+    print("👂 Lyssnar efter 'Jarvis'...")
 
     try:
-        # Start arecord process that outputs raw audio to stdout
-        # Format: 16-bit signed LE, 16kHz, mono
-        process = subprocess.Popen(
-            ['arecord', '-D', MIC_DEVICE, '-f', 'S16_LE', '-r', '16000', '-c', '1', '-t', 'raw', '-q'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-
+        rec = PvRecorder(device_index=-1, frame_length=porcupine.frame_length)
+        rec.start()
         start_time = time.time()
-        bytes_per_chunk = WAKE_WORD_CHUNK_SIZE * 2  # 2 bytes per 16-bit sample
 
         while True:
-            # Check timeout
             if timeout and (time.time() - start_time) > timeout:
-                process.terminate()
+                rec.stop()
+                rec.delete()
                 return False
 
-            # Read a chunk of audio
-            audio_bytes = process.stdout.read(bytes_per_chunk)
-            if len(audio_bytes) < bytes_per_chunk:
-                continue
+            pcm = rec.read()
+            result = porcupine.process(pcm)
 
-            # Convert bytes to numpy array (16-bit signed int to float)
-            audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
-            audio_float = audio_int16.astype(np.float32) / 32768.0
-
-            # Feed to wake word model
-            prediction = oww_model.predict(audio_float)
-
-            # Check if wake word detected
-            score = prediction[WAKE_WORD_NAME]
-            if score > WAKE_WORD_THRESHOLD:
-                print(f"✨ Wake word detected! (score: {score:.2f})")
-                process.terminate()
+            if result >= 0:
+                print("✨ Jarvis!")
+                rec.stop()
+                rec.delete()
                 return True
 
     except Exception as e:
-        print(f"⚠️ Wake word listening error: {e}")
-        try:
-            process.terminate()
-        except:
-            pass
+        print(f"⚠️ Wake word error: {e}")
         return False
 
 
@@ -574,9 +558,9 @@ def main():
     print("=" * 50)
     print()
 
-    if oww_model:
-        print(f"Säg '{WAKE_WORD_MODEL}' för att prata, Ctrl+C för att avsluta")
-        speak(f"Hej Leon! Jag är din robotbil. Säg Hey Jarvis så lyssnar jag!")
+    if porcupine:
+        print(f"Säg 'Jarvis' för att prata, Ctrl+C för att avsluta")
+        speak(f"Hej Leon! Jag är din robotbil. Säg Jarvis så lyssnar jag!")
     else:
         print("Tryck ENTER för att prata, Ctrl+C för att avsluta")
         speak("Hej Leon! Jag är din robotbil. Tryck på knappen och prata med mig!")
@@ -597,7 +581,7 @@ def main():
                 pass
 
             # Wait for wake word or Enter key (fallback)
-            if oww_model:
+            if porcupine:
                 detected = listen_for_wake_word()
                 if not detected:
                     consecutive_failures += 1
