@@ -53,7 +53,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 PIPER_MODEL = "/home/pi/.local/share/piper/sv_SE-nst-medium.onnx"
 
 # Microphone configuration
-MIC_DEVICE = "plughw:2,0"
+MIC_DEVICE = "plughw:3,0"
 
 # Speaker configuration - use robothat device which is configured in system
 SPEAKER_DEVICE = "robothat"
