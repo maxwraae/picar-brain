@@ -82,11 +82,17 @@ WAKE_WORD = "jarvis"  # Built-in: alexa, americano, blueberry, bumblebee, comput
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Piper TTS model path (Swedish)
+# Piper TTS model path (Swedish) - kept as fallback
 PIPER_MODEL = "/home/pi/.local/share/piper/sv_SE-nst-medium.onnx"
 
 # Speaker configuration - use robothat device which is configured in system
 SPEAKER_DEVICE = "robothat"
+
+# OpenAI TTS settings (primary TTS engine)
+TTS_MODEL = "gpt-4o-mini-tts"
+TTS_VOICE = "nova"  # Options: alloy, echo, fable, onyx, nova, shimmer
+TTS_INSTRUCTIONS = "Speak Swedish naturally with energy and playfulness. You are a friendly robot car talking to a 9-year-old boy."
+USE_OPENAI_TTS = True  # Set to False to use Piper instead
 
 # ============== USB MICROPHONE AUTO-DETECTION ==============
 
@@ -262,12 +268,84 @@ Vad intressant! Berätta mer!
 # Initialize conversation with system prompt
 conversation_history.append({"role": "system", "content": SYSTEM_PROMPT})
 
-# ============== TTS FUNCTION ==============
+# ============== TTS FUNCTIONS ==============
 
-def speak(text):
+def speak_openai(text):
     """
-    Speak using Piper TTS (Swedish) with retry logic
-    If TTS fails, print error but don't crash
+    Speak using OpenAI TTS with streaming.
+    Streams audio chunks directly to aplay for low latency.
+    """
+    for attempt in range(MAX_RETRIES):
+        try:
+            if attempt > 0:
+                time.sleep(AUDIO_DEVICE_RETRY_DELAY)
+
+            # Use streaming response from OpenAI TTS
+            with client.audio.speech.with_streaming_response.create(
+                model=TTS_MODEL,
+                voice=TTS_VOICE,
+                input=text,
+                response_format="pcm",  # Raw 24kHz 16-bit mono PCM
+                instructions=TTS_INSTRUCTIONS,
+            ) as response:
+                # Stream audio chunks to aplay via pipe
+                # PCM format: 24kHz, 16-bit signed, mono
+                proc = subprocess.Popen(
+                    ["aplay", "-D", SPEAKER_DEVICE, "-f", "S16_LE", "-r", "24000", "-c", "1", "-q"],
+                    stdin=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+
+                try:
+                    for chunk in response.iter_bytes(chunk_size=4096):
+                        if proc.poll() is not None:
+                            # aplay process died
+                            break
+                        proc.stdin.write(chunk)
+
+                    proc.stdin.close()
+                    proc.wait(timeout=10)
+
+                    if proc.returncode == 0:
+                        return True
+                    else:
+                        stderr = proc.stderr.read().decode() if proc.stderr else ""
+                        if "busy" in stderr.lower() and attempt < MAX_RETRIES - 1:
+                            time.sleep(AUDIO_DEVICE_RETRY_DELAY * 2)
+                            continue
+                        if attempt < MAX_RETRIES - 1:
+                            continue
+                        print(f"❌ Kunde inte spela ljud: {stderr[:50]}")
+                        return False
+
+                except BrokenPipeError:
+                    if attempt < MAX_RETRIES - 1:
+                        continue
+                    print("❌ Ljuduppspelning avbröts")
+                    return False
+
+        except subprocess.TimeoutExpired:
+            print(f"⏱️ TTS timeout (försök {attempt + 1}/{MAX_RETRIES})")
+            try:
+                proc.kill()
+            except:
+                pass
+            if attempt == MAX_RETRIES - 1:
+                print("❌ Rösten svarar inte")
+                return False
+
+        except Exception as e:
+            print(f"❌ OpenAI TTS-fel (försök {attempt + 1}/{MAX_RETRIES}): {e}")
+            if attempt == MAX_RETRIES - 1:
+                return False
+
+    return False
+
+
+def speak_piper(text):
+    """
+    Speak using Piper TTS (Swedish) with retry logic.
+    Fallback option if OpenAI TTS fails.
     """
     for attempt in range(MAX_RETRIES):
         try:
@@ -340,6 +418,21 @@ def speak(text):
                 return False
 
     return False
+
+
+def speak(text):
+    """
+    Main speak function - uses OpenAI TTS by default, falls back to Piper.
+    """
+    if USE_OPENAI_TTS:
+        success = speak_openai(text)
+        if success:
+            return True
+        else:
+            print("⚠️ OpenAI TTS misslyckades, provar Piper...")
+            return speak_piper(text)
+    else:
+        return speak_piper(text)
 
 # ============== ACTION FUNCTIONS ==============
 
