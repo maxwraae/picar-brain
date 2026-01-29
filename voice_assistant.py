@@ -29,6 +29,7 @@ import random
 from keys import OPENAI_API_KEY
 from memory import add_observation, format_memories_for_prompt
 from exploration import explore, describe_scene, capture_frame
+from actions import px, ALL_ACTIONS as ACTIONS, execute_action, execute_actions
 
 # ============== SIGNAL HANDLING ==============
 
@@ -214,12 +215,11 @@ os.popen("pinctrl set 20 op dh")
 
 # ============== INITIALIZATION ==============
 
-# Initialize car
+# Initialize car (using px from actions.py)
 try:
-    car = Picarx()
     time.sleep(0.5)
-    car.reset()
-    car.set_cam_tilt_angle(20)  # Default head position
+    px.reset()
+    px.set_cam_tilt_angle(20)  # Default head position
     print("✓ PiCar initialized")
 except Exception as e:
     print(f"✗ Failed to initialize PiCar: {e}")
@@ -472,7 +472,7 @@ def enter_table_mode():
 
     # Stop any movement
     try:
-        car.stop()
+        px.stop()
     except:
         pass
 
@@ -504,14 +504,7 @@ def speak_system_event(event: str):
         if actions:
             for action_name in actions:
                 if action_name in ACTIONS:
-                    # In table mode, only allow head actions
-                    if current_mode == "table_mode":
-                        head_actions = ["look_up", "look_down", "look_left", "look_right",
-                                       "look_around", "look_at_person", "nod", "shake_head", "tilt_head"]
-                        if action_name not in head_actions:
-                            print(f"Action '{action_name}' blocked - table mode")
-                            continue
-                    safe_action(ACTIONS[action_name], action_name)
+                    execute_action(action_name, table_mode=(current_mode == "table_mode"))
 
         # Save memory if present
         if memory:
@@ -1044,111 +1037,8 @@ def speak(text):
         return speak_piper(text)
 
 # ============== ACTION FUNCTIONS ==============
-
-def safe_action(action_func, action_name):
-    """
-    Wrapper for action execution with error handling
-    Actions should never crash the assistant
-    """
-    try:
-        action_func()
-    except Exception as e:
-        print(f"⚠️ Action '{action_name}' misslyckades: {e}")
-        # Try to stop car safely
-        try:
-            car.stop()
-        except:
-            pass
-
-def do_forward():
-    """Drive forward for a bit"""
-    car.forward(30)
-    time.sleep(1.5)
-    car.stop()
-
-def do_backward():
-    """Drive backward for a bit"""
-    car.backward(30)
-    time.sleep(1.5)
-    car.stop()
-
-def do_spin_right():
-    """Spin 360 degrees to the right"""
-    car.set_dir_servo_angle(30)
-    time.sleep(0.1)
-    car.forward(50)
-    time.sleep(2.0)
-    car.stop()
-    car.set_dir_servo_angle(0)
-
-def do_spin_left():
-    """Spin 360 degrees to the left"""
-    car.set_dir_servo_angle(-30)
-    time.sleep(0.1)
-    car.forward(50)
-    time.sleep(2.0)
-    car.stop()
-    car.set_dir_servo_angle(0)
-
-def do_dance():
-    """Do a little dance"""
-    for _ in range(3):
-        car.set_dir_servo_angle(-25)
-        car.forward(30)
-        time.sleep(0.3)
-        car.stop()
-
-        car.set_dir_servo_angle(25)
-        car.forward(30)
-        time.sleep(0.3)
-        car.stop()
-
-    car.set_dir_servo_angle(0)
-
-def do_nod():
-    """Nod head (yes)"""
-    car.set_cam_tilt_angle(5)
-    time.sleep(0.1)
-    car.set_cam_tilt_angle(-30)
-    time.sleep(0.1)
-    car.set_cam_tilt_angle(5)
-    time.sleep(0.1)
-    car.set_cam_tilt_angle(-30)
-    time.sleep(0.1)
-    car.set_cam_tilt_angle(20)
-
-def do_shake_head():
-    """Shake head (no)"""
-    car.set_cam_pan_angle(0)
-    car.set_cam_pan_angle(60)
-    time.sleep(0.2)
-    car.set_cam_pan_angle(-50)
-    time.sleep(0.1)
-    car.set_cam_pan_angle(40)
-    time.sleep(0.1)
-    car.set_cam_pan_angle(-30)
-    time.sleep(0.1)
-    car.set_cam_pan_angle(20)
-    time.sleep(0.1)
-    car.set_cam_pan_angle(-10)
-    time.sleep(0.1)
-    car.set_cam_pan_angle(0)
-
-def do_stop():
-    """Stop all movement"""
-    car.stop()
-
-# Action dispatch dictionary
-ACTIONS = {
-    "forward": do_forward,
-    "backward": do_backward,
-    "spin_right": do_spin_right,
-    "spin_left": do_spin_left,
-    "dance": do_dance,
-    "nod": do_nod,
-    "shake_head": do_shake_head,
-    "stop": do_stop,
-}
+# Actions are now imported from actions.py
+# ACTIONS dictionary is imported as ALL_ACTIONS from actions.py
 
 # ============== CHAT FUNCTION ==============
 
@@ -1750,22 +1640,22 @@ def reset_car_safe():
     Never crashes even if hardware fails
     """
     try:
-        car.stop()
+        px.stop()
     except:
         pass
 
     try:
-        car.set_dir_servo_angle(0)
+        px.set_dir_servo_angle(0)
     except:
         pass
 
     try:
-        car.set_cam_pan_angle(0)
+        px.set_cam_pan_angle(0)
     except:
         pass
 
     try:
-        car.set_cam_tilt_angle(20)
+        px.set_cam_tilt_angle(20)
     except:
         pass
 
@@ -1805,7 +1695,7 @@ def exploration_thought_callback(novelty: float) -> str:
         if actions:
             for action_name in actions:
                 if action_name in ACTIONS:
-                    safe_action(ACTIONS[action_name], action_name)
+                    execute_action(action_name, table_mode=False)
 
         # Save memory if present
         if memory:
@@ -2213,11 +2103,11 @@ def main():
             if actions:
                 print(f"🎬 Rörelser: {actions}")
 
-            # Execute actions (wrapped in safe handler)
+            # Execute actions (using execute_action from actions.py)
             for action_name in actions:
                 if action_name in ACTIONS:
                     print(f"⚡ Utför: {action_name}")
-                    safe_action(ACTIONS[action_name], action_name)
+                    execute_action(action_name, table_mode=(current_mode == "table_mode"))
                     time.sleep(0.3)
 
             # Reset to default position
