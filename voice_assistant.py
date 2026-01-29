@@ -25,6 +25,7 @@ import sys
 import signal
 import numpy as np
 import threading
+import random
 from keys import OPENAI_API_KEY
 from memory import add_observation, format_memories_for_prompt
 from exploration import explore, describe_scene, capture_frame
@@ -53,6 +54,7 @@ import struct
 # PiCar imports
 from picarx import Picarx
 from robot_hat import Music, Pin
+from sunfounder_controller import SunFounderController
 
 # ============== CONSTANTS ==============
 
@@ -395,6 +397,71 @@ conversation_history = []
 current_mode = "listening"  # "listening", "conversation", "exploring", "table_mode"
 last_conversation_time = time.time()
 CONVERSATION_TIMEOUT = 30  # seconds before exploring
+
+# Initialize controller (do once at startup)
+try:
+    controller = SunFounderController()
+except:
+    controller = None
+
+last_manual_input_time = 0
+MANUAL_CONTROL_TIMEOUT = 5  # seconds
+
+# ============== MANUAL CONTROL DETECTION ==============
+
+def check_manual_control() -> bool:
+    """Check if manual control is active."""
+    global last_manual_input_time
+
+    if controller is None:
+        return False
+
+    try:
+        joystick = controller.get('K')
+        if joystick and (abs(joystick[0]) > 5 or abs(joystick[1]) > 5):
+            last_manual_input_time = time.time()
+            return True
+    except:
+        pass
+
+    # Check timeout
+    if time.time() - last_manual_input_time < MANUAL_CONTROL_TIMEOUT:
+        return True
+
+    return False
+
+def handle_manual_control():
+    """Handle manual control mode."""
+    global current_mode
+
+    previous_mode = current_mode
+    current_mode = "manual_control"
+
+    # Inform Jarvis
+    speak_system_event("[SYSTEM: Leon har tagit över kontrollerna. Du kan prata och röra huvudet men inte köra.]")
+
+    # Loop while manual control active
+    comment_interval = random.randint(5, 15)
+    last_comment_time = time.time()
+
+    while check_manual_control():
+        # Occasional comment on the ride
+        if time.time() - last_comment_time > comment_interval:
+            joystick = controller.get('K') if controller else [0, 0]
+            speed = abs(joystick[1]) if joystick else 0
+            direction = "framåt" if joystick and joystick[1] > 0 else "bakåt"
+
+            event = f"[SYSTEM: Leon kör dig manuellt. Fart: {speed}. Riktning: {direction}.]"
+            speak_system_event(event)
+
+            last_comment_time = time.time()
+            comment_interval = random.randint(10, 20)
+
+        time.sleep(0.1)
+
+    # Manual control ended
+    current_mode = previous_mode
+    speak_system_event("[SYSTEM: Leon släppte kontrollerna. Du kan röra dig själv igen.]")
 
 # ============== TABLE MODE SAFETY ==============
 
@@ -1985,6 +2052,11 @@ def main():
             if not skip_wake_word:
                 # LED off = waiting for wake word (or follow-up)
                 led_idle()
+
+                # Check for manual control
+                if check_manual_control():
+                    handle_manual_control()
+                    continue  # Restart loop after manual control ends
 
                 # Check for exploration mode after timeout
                 time_since_conversation = time.time() - last_conversation_time
