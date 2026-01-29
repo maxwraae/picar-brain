@@ -42,6 +42,11 @@ signal.signal(signal.SIGINT, handle_shutdown)
 import pvporcupine
 from pvrecorder import PvRecorder
 
+# Voice Activity Detection
+import webrtcvad
+import wave
+import struct
+
 # PiCar imports
 from picarx import Picarx
 from robot_hat import Music, Pin
@@ -51,6 +56,22 @@ from robot_hat import Music, Pin
 MAX_RETRIES = 3
 SUBPROCESS_TIMEOUT = 10  # seconds
 AUDIO_DEVICE_RETRY_DELAY = 0.5  # seconds
+
+# Voice Activity Detection (VAD) configuration
+VAD_AGGRESSIVENESS = 2  # 0-3, higher = more aggressive filtering
+SILENCE_THRESHOLD = 1.5  # seconds of silence to stop recording
+MAX_RECORD_DURATION = 8  # seconds max recording time
+MIN_RECORD_DURATION = 0.5  # seconds minimum before allowing stop
+
+# Follow-up conversation window
+FOLLOW_UP_WINDOW = 5.0  # seconds to listen for follow-up without wake word
+
+# Sound effects paths
+SOUNDS_DIR = "/home/pi/picar-brain/sounds"
+SOUND_DING = f"{SOUNDS_DIR}/ding.wav"        # Wake word detected (0.12s)
+SOUND_THINKING = f"{SOUNDS_DIR}/thinking.wav" # During GPT processing (3s)
+SOUND_RETRY = f"{SOUNDS_DIR}/retry.wav"       # On errors (0.27s)
+SOUND_READY = f"{SOUNDS_DIR}/ready.wav"       # On startup (0.5s)
 
 # Wake word configuration (Picovoice)
 # Get free access key from https://console.picovoice.ai
@@ -483,6 +504,13 @@ def chat_with_gpt(user_message):
             # Collect the full response and speak sentence-by-sentence
             sentence_buffer = ""
             full_response = ""
+            first_token_received = False
+
+            # Start thinking sound while waiting for GPT response
+            try:
+                music.sound_play_threading(SOUND_THINKING)
+            except Exception as e:
+                print(f"⚠️ Thinking sound failed: {e}")
 
             for chunk in response:
                 if not chunk.choices:
@@ -491,6 +519,14 @@ def chat_with_gpt(user_message):
                 delta = chunk.choices[0].delta
                 if not delta.content:
                     continue
+
+                # Stop thinking sound on first token
+                if not first_token_received:
+                    first_token_received = True
+                    try:
+                        music.sound_stop()
+                    except Exception as e:
+                        print(f"⚠️ Stop thinking sound failed: {e}")
 
                 # Add token to buffer
                 token = delta.content
@@ -696,10 +732,165 @@ def startup_self_test():
 
 # ============== MAIN LOOP ==============
 
+def record_audio_with_vad():
+    """
+    Record audio using PvRecorder with Voice Activity Detection (VAD).
+    Stops recording when silence is detected for SILENCE_THRESHOLD seconds.
+
+    Returns: path to wav file, or None on failure
+
+    Uses webrtcvad which requires:
+    - 16-bit signed PCM audio
+    - Sample rate: 16000 Hz (supported by webrtcvad)
+    - Frame duration: 30ms = 480 samples at 16kHz
+    """
+    wav_file = "/tmp/picar_input.wav"
+
+    # webrtcvad frame requirements: 10, 20, or 30ms at 16kHz
+    # 30ms at 16000 Hz = 480 samples
+    SAMPLE_RATE = 16000
+    VAD_FRAME_MS = 30
+    VAD_FRAME_SAMPLES = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)  # 480
+
+    # PvRecorder uses 512-sample frames by default, but we need to work with VAD frames
+    # We'll collect audio and process in VAD-compatible chunks
+    PVRECORDER_FRAME_LENGTH = 512
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            if attempt > 0:
+                time.sleep(AUDIO_DEVICE_RETRY_DELAY)
+
+            # Initialize VAD
+            vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
+
+            # Find USB mic for PvRecorder
+            device_idx = find_usb_mic_pvrecorder()
+            if device_idx is None:
+                # Try common indices
+                for idx in [0, 15, 1, 2]:
+                    try:
+                        test_rec = PvRecorder(device_index=idx, frame_length=PVRECORDER_FRAME_LENGTH)
+                        test_rec.delete()
+                        device_idx = idx
+                        break
+                    except:
+                        continue
+                if device_idx is None:
+                    device_idx = 0
+
+            # Start recording
+            recorder = PvRecorder(device_index=device_idx, frame_length=PVRECORDER_FRAME_LENGTH)
+            recorder.start()
+
+            all_audio = []  # Collect all audio frames
+            vad_buffer = []  # Buffer to accumulate samples for VAD processing
+
+            start_time = time.time()
+            last_speech_time = start_time
+            speech_detected_ever = False
+
+            try:
+                while True:
+                    elapsed = time.time() - start_time
+
+                    # Safety limit: stop after MAX_RECORD_DURATION seconds
+                    if elapsed >= MAX_RECORD_DURATION:
+                        print(f"⏱️ Max tid ({MAX_RECORD_DURATION}s)")
+                        break
+
+                    # Read audio frame from PvRecorder
+                    pcm = recorder.read()
+                    all_audio.extend(pcm)
+                    vad_buffer.extend(pcm)
+
+                    # Process VAD in 30ms chunks (480 samples)
+                    while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+                        # Extract VAD frame
+                        vad_frame = vad_buffer[:VAD_FRAME_SAMPLES]
+                        vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+
+                        # Convert to bytes for webrtcvad (16-bit signed PCM)
+                        frame_bytes = struct.pack(f'{VAD_FRAME_SAMPLES}h', *vad_frame)
+
+                        # Check if frame contains speech
+                        is_speech = vad.is_speech(frame_bytes, SAMPLE_RATE)
+
+                        if is_speech:
+                            last_speech_time = time.time()
+                            if not speech_detected_ever:
+                                speech_detected_ever = True
+
+                    # Check silence duration (only after minimum recording time)
+                    if elapsed >= MIN_RECORD_DURATION:
+                        silence_duration = time.time() - last_speech_time
+                        if silence_duration >= SILENCE_THRESHOLD:
+                            print(f"🔇 Tystnad ({silence_duration:.1f}s)")
+                            break
+
+            finally:
+                recorder.stop()
+                recorder.delete()
+
+            # Check we got enough audio
+            if len(all_audio) < SAMPLE_RATE * 0.3:  # Less than 0.3 seconds
+                if attempt < MAX_RETRIES - 1:
+                    continue
+                print("⚠️ Inspelningen blev för kort")
+                return None
+
+            # Write WAV file
+            with wave.open(wav_file, 'wb') as wf:
+                wf.setnchannels(1)  # Mono
+                wf.setsampwidth(2)  # 16-bit = 2 bytes
+                wf.setframerate(SAMPLE_RATE)
+                # Pack audio data as 16-bit signed integers
+                audio_bytes = struct.pack(f'{len(all_audio)}h', *all_audio)
+                wf.writeframes(audio_bytes)
+
+            # Verify file
+            if os.path.exists(wav_file):
+                size = os.path.getsize(wav_file)
+                duration_recorded = len(all_audio) / SAMPLE_RATE
+                print(f"✓ Inspelat: {duration_recorded:.1f}s ({size} bytes)")
+                if size < 1000:
+                    if attempt < MAX_RETRIES - 1:
+                        continue
+                    print("⚠️ Inspelningen blev för kort")
+                    return None
+                return wav_file
+            else:
+                if attempt < MAX_RETRIES - 1:
+                    continue
+                print("❌ Ingen ljudfil skapades")
+                return None
+
+        except Exception as e:
+            print(f"❌ Inspelningsfel (försök {attempt + 1}/{MAX_RETRIES}): {e}")
+            if attempt == MAX_RETRIES - 1:
+                return None
+
+    return None
+
+
 def record_audio(duration=4):
     """
-    Record audio using arecord with retry logic for device busy
+    Record audio - uses VAD-based recording for smart cutoff.
+    Falls back to fixed-duration arecord if VAD fails.
+
+    The duration parameter is kept for API compatibility but is not used
+    when VAD recording succeeds.
     """
+    # Try VAD-based recording first
+    try:
+        result = record_audio_with_vad()
+        if result:
+            return result
+    except Exception as e:
+        print(f"⚠️ VAD-inspelning misslyckades: {e}")
+
+    # Fallback to original arecord method
+    print("⚠️ Använder reservmetod...")
     wav_file = "/tmp/picar_input.wav"
 
     for attempt in range(MAX_RETRIES):
@@ -878,11 +1069,107 @@ def listen_for_wake_word(timeout=None):
 
                 if result >= 0:
                     print("✨ Jarvis!")
+                    # Play ding sound immediately for feedback
+                    try:
+                        music.sound_play_threading(SOUND_DING)
+                    except Exception as e:
+                        print(f"⚠️ Ding sound failed: {e}")
                     return True
 
     except Exception as e:
         print(f"⚠️ Wake word error: {e}")
         return False
+
+
+def listen_for_follow_up():
+    """
+    Listen for follow-up speech without requiring wake word.
+    Uses VAD to detect if user starts speaking within FOLLOW_UP_WINDOW.
+
+    Returns: True if speech detected (ready to record), False if timeout/silence
+    """
+    print("👂 Lyssnar... (fortsätt prata)")
+
+    # VAD frame requirements: 30ms at 16kHz = 480 samples
+    SAMPLE_RATE = 16000
+    VAD_FRAME_MS = 30
+    VAD_FRAME_SAMPLES = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)  # 480
+    PVRECORDER_FRAME_LENGTH = 512
+
+    # Speech detection threshold - need several consecutive speech frames
+    SPEECH_FRAMES_THRESHOLD = 3  # ~90ms of speech to trigger
+
+    try:
+        # Initialize VAD
+        vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
+
+        # Find USB mic for PvRecorder
+        device_idx = find_usb_mic_pvrecorder()
+        if device_idx is None:
+            for idx in [0, 15, 1, 2]:
+                try:
+                    test_rec = PvRecorder(device_index=idx, frame_length=PVRECORDER_FRAME_LENGTH)
+                    test_rec.delete()
+                    device_idx = idx
+                    break
+                except:
+                    continue
+            if device_idx is None:
+                device_idx = 0
+
+        # Start recording
+        recorder = PvRecorder(device_index=device_idx, frame_length=PVRECORDER_FRAME_LENGTH)
+        recorder.start()
+
+        vad_buffer = []
+        consecutive_speech_frames = 0
+        start_time = time.time()
+
+        try:
+            while True:
+                # Check for shutdown
+                if shutdown_requested:
+                    return False
+
+                elapsed = time.time() - start_time
+
+                # Timeout - no speech detected within follow-up window
+                if elapsed >= FOLLOW_UP_WINDOW:
+                    print("⏱️ Ingen fortsättning hörd")
+                    return False
+
+                # Read audio frame
+                pcm = recorder.read()
+                vad_buffer.extend(pcm)
+
+                # Process VAD in 30ms chunks
+                while len(vad_buffer) >= VAD_FRAME_SAMPLES:
+                    vad_frame = vad_buffer[:VAD_FRAME_SAMPLES]
+                    vad_buffer = vad_buffer[VAD_FRAME_SAMPLES:]
+
+                    # Convert to bytes for webrtcvad
+                    frame_bytes = struct.pack(f'{VAD_FRAME_SAMPLES}h', *vad_frame)
+
+                    # Check if frame contains speech
+                    is_speech = vad.is_speech(frame_bytes, SAMPLE_RATE)
+
+                    if is_speech:
+                        consecutive_speech_frames += 1
+                        if consecutive_speech_frames >= SPEECH_FRAMES_THRESHOLD:
+                            print("🎤 Fortsätter lyssna...")
+                            return True
+                    else:
+                        consecutive_speech_frames = 0
+
+        finally:
+            recorder.stop()
+            recorder.delete()
+
+    except Exception as e:
+        print(f"⚠️ Follow-up listening error: {e}")
+        return False
+
+    return False
 
 
 def main():
@@ -905,6 +1192,13 @@ def main():
         speak("Jag har ett problem. Fråga pappa om hjälp.")
         return  # Exit gracefully
 
+    # Play ready sound on startup
+    try:
+        music.sound_play_threading(SOUND_READY)
+        time.sleep(0.5)  # Let the ready sound play before speaking
+    except Exception as e:
+        print(f"⚠️ Ready sound failed: {e}")
+
     if porcupine:
         print(f"Säg 'Jarvis' för att prata, Ctrl+C för att avsluta")
         speak(f"Hej Leon! Jag är din robotbil. Säg Jarvis så lyssnar jag!")
@@ -919,16 +1213,29 @@ def main():
     consecutive_failures = 0
     MAX_CONSECUTIVE_FAILURES = 5
 
+    # Follow-up mode: after robot responds, listen for continuation without wake word
+    in_follow_up_mode = False
+
     while not shutdown_requested:
         try:
-            # LED off = listening for wake word
+            # LED off = listening for wake word (or follow-up)
             try:
                 led.off()
             except:
                 pass
 
-            # Wait for wake word or Enter key (fallback)
-            if porcupine:
+            # Check for follow-up speech or wait for wake word
+            if in_follow_up_mode and porcupine:
+                # Listen for follow-up without wake word
+                follow_up_detected = listen_for_follow_up()
+                if not follow_up_detected:
+                    # No follow-up, return to wake word mode
+                    in_follow_up_mode = False
+                    continue
+                # Follow-up detected - skip ding sound, go straight to recording
+                # (already printed "Fortsätter lyssna...")
+            elif porcupine:
+                # Normal wake word mode
                 detected = listen_for_wake_word()
                 if not detected:
                     consecutive_failures += 1
@@ -940,11 +1247,7 @@ def main():
                     continue
                 # Reset failure counter on successful detection
                 consecutive_failures = 0
-                # Quick beep for immediate feedback
-                try:
-                    music.sound_play_threading('/home/pi/picar-brain/sounds/car-double-horn.wav')
-                except:
-                    pass
+                # Ding sound already played in listen_for_wake_word()
                 # Small delay before recording
                 time.sleep(0.3)
             else:
@@ -959,11 +1262,17 @@ def main():
 
             print("🔴 Spelar in... (prata nu!)")
 
-            # Record 4 seconds
+            # Record with VAD
             wav_file = record_audio(duration=4)
             if not wav_file:
                 consecutive_failures += 1
+                in_follow_up_mode = False  # Reset follow-up on failure
                 print("❌ Inspelning misslyckades")
+                # Play retry sound for friendly feedback
+                try:
+                    music.sound_play_threading(SOUND_RETRY)
+                except Exception as e:
+                    print(f"⚠️ Retry sound failed: {e}")
                 speak("Jag hörde inte, försök igen")
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                     print("\n⚠️ För många fel. Prova att starta om mig.")
@@ -977,7 +1286,13 @@ def main():
 
             if not text or not text.strip():
                 consecutive_failures += 1
+                in_follow_up_mode = False  # Reset follow-up on failure
                 print("❓ Kunde inte höra något")
+                # Play retry sound for friendly feedback
+                try:
+                    music.sound_play_threading(SOUND_RETRY)
+                except Exception as e:
+                    print(f"⚠️ Retry sound failed: {e}")
                 speak("Jag hörde inte vad du sa. Försök igen!")
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                     print("\n⚠️ För många fel. Prova att starta om mig.")
@@ -1013,6 +1328,10 @@ def main():
             except:
                 pass
 
+            # Enable follow-up mode - listen for continuation without wake word
+            if porcupine:
+                in_follow_up_mode = True
+
         except KeyboardInterrupt:
             print("\n\n👋 Hejdå!")
             speak("Hejdå Leon! Vi ses snart!")
@@ -1020,6 +1339,7 @@ def main():
 
         except Exception as e:
             consecutive_failures += 1
+            in_follow_up_mode = False  # Reset follow-up on error
             print(f"❌ Oväntat fel: {e}")
             try:
                 led.off()
