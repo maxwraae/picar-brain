@@ -11,7 +11,7 @@ Voice-controlled robot car for Leon (9 years old). Swedish language, wake word a
 | Pi password | `Leon` |
 | Pi IP | `192.168.1.101` (may change) |
 | Project path on Pi | `/home/pi/picar-brain` |
-| Service name | `picar-voice` |
+| Service name | `voice` |
 | Wake word | "Jarvis" |
 
 ## Deployment
@@ -23,13 +23,13 @@ git add -A && git commit -m "message" && git push
 
 **On the Pi:**
 ```bash
-cd /home/pi/picar-brain && git pull && sudo systemctl restart picar-voice
+cd /home/pi/picar-brain && git pull && sudo systemctl restart voice
 ```
 
 **Check service status:**
 ```bash
-sudo systemctl status picar-voice
-journalctl -u picar-voice -f  # Live logs
+sudo systemctl status voice
+journalctl -u voice -f  # Live logs
 ```
 
 ## SSH Setup
@@ -155,7 +155,7 @@ MIC_DEVICE = auto-detected USB mic
 **Service won't start:**
 ```bash
 # Check logs
-journalctl -u picar-voice -n 50
+journalctl -u voice -n 50
 
 # Test manually
 cd /home/pi/picar-brain
@@ -187,7 +187,7 @@ mkdir -p ~/.local/share/piper
 
 ## Service Setup
 
-The systemd service file at `/etc/systemd/system/picar-voice.service`:
+The systemd service file at `/etc/systemd/system/voice.service`:
 ```ini
 [Unit]
 Description=PiCar Voice Assistant
@@ -207,8 +207,8 @@ WantedBy=multi-user.target
 
 Enable with:
 ```bash
-sudo systemctl enable picar-voice
-sudo systemctl start picar-voice
+sudo systemctl enable voice
+sudo systemctl start voice
 ```
 
 ## Robot Personality
