@@ -24,6 +24,7 @@ import os
 import sys
 import signal
 import numpy as np
+import threading
 from keys import OPENAI_API_KEY
 
 # ============== SIGNAL HANDLING ==============
@@ -65,6 +66,21 @@ MIN_RECORD_DURATION = 0.5  # seconds minimum before allowing stop
 
 # Follow-up conversation window
 FOLLOW_UP_WINDOW = 3.0  # seconds to listen for follow-up without wake word (reduced from 5)
+
+# Minimum words to consider valid speech (filters noise transcribed as short filler)
+MIN_WORDS_FOR_VALID_SPEECH = 2
+
+# Common filler/noise transcriptions to filter out (Whisper often transcribes noise as these)
+NOISE_TRANSCRIPTIONS = {
+    "", ".", "..", "...", "hm", "hmm", "hmmm", "mm", "mmm", "mhm",
+    "uh", "um", "ah", "eh", "oh", "öh", "äh", "ja", "nej", "jo",
+    "tack", "ok", "okay", "hej", "du", "jag", "och", "att", "det",
+    "Tack för att du tittade.", "Tack för att du tittade",  # Common Whisper hallucination
+    "Tack för att ni tittade.", "Tack för att ni tittade",
+    "Prenumerera på kanalen.", "Prenumerera på kanalen",
+    "Glöm inte att prenumerera", "Gilla och prenumerera",
+    "Musik", "♪", "♫", "[Musik]", "[musik]",
+}
 
 # TTS volume boost (OpenAI TTS is quieter than sound effects)
 TTS_VOLUME_BOOST = 3.0  # Multiply amplitude by this factor
@@ -203,6 +219,74 @@ except Exception as e:
 
 music = Music()
 led = Pin('LED')
+
+# ============== LED PATTERNS ==============
+
+# LED state control for visual feedback
+led_pattern_stop = threading.Event()
+led_pattern_thread = None
+
+def led_pattern_blink(interval=0.15):
+    """Fast blink pattern for 'thinking' state."""
+    while not led_pattern_stop.is_set():
+        try:
+            led.on()
+            time.sleep(interval)
+            led.off()
+            time.sleep(interval)
+        except:
+            break
+
+def led_pattern_pulse(on_time=0.3, off_time=0.7):
+    """Slow pulse pattern for 'talking' state."""
+    while not led_pattern_stop.is_set():
+        try:
+            led.on()
+            time.sleep(on_time)
+            led.off()
+            time.sleep(off_time)
+        except:
+            break
+
+def led_start_pattern(pattern_func):
+    """Start an LED pattern in background thread."""
+    global led_pattern_thread
+    led_stop_pattern()  # Stop any existing pattern
+    led_pattern_stop.clear()
+    led_pattern_thread = threading.Thread(target=pattern_func, daemon=True)
+    led_pattern_thread.start()
+
+def led_stop_pattern():
+    """Stop any running LED pattern."""
+    global led_pattern_thread
+    led_pattern_stop.set()
+    if led_pattern_thread and led_pattern_thread.is_alive():
+        led_pattern_thread.join(timeout=0.5)
+    led_pattern_thread = None
+    try:
+        led.off()
+    except:
+        pass
+
+def led_thinking():
+    """Visual: fast blink = processing."""
+    led_start_pattern(led_pattern_blink)
+
+def led_talking():
+    """Visual: slow pulse = speaking."""
+    led_start_pattern(led_pattern_pulse)
+
+def led_listening():
+    """Visual: solid on = listening."""
+    led_stop_pattern()
+    try:
+        led.on()
+    except:
+        pass
+
+def led_idle():
+    """Visual: off = waiting for wake word."""
+    led_stop_pattern()
 
 # Initialize wake word (Picovoice Porcupine)
 # Try to get access key from keys.py
@@ -606,7 +690,8 @@ def chat_with_gpt(user_message):
             full_response = ""
             first_token_received = False
 
-            # Start thinking sound while waiting for GPT response
+            # Start thinking sound and LED pattern while waiting for GPT response
+            led_thinking()  # Fast blink = processing
             try:
                 music.sound_play_threading(SOUND_THINKING)
             except Exception as e:
@@ -620,9 +705,10 @@ def chat_with_gpt(user_message):
                 if not delta.content:
                     continue
 
-                # Stop thinking sound on first token
+                # Stop thinking sound on first token, start talking LED
                 if not first_token_received:
                     first_token_received = True
+                    led_talking()  # Slow pulse = speaking
                     try:
                         music.sound_stop()
                     except Exception as e:
@@ -1027,6 +1113,28 @@ def record_audio(duration=4):
     return None
 
 
+def is_valid_speech(text):
+    """
+    Check if transcribed text is valid speech (not noise/filler).
+    Returns: (is_valid, reason)
+    """
+    if not text:
+        return False, "empty"
+
+    cleaned = text.strip()
+
+    # Check against known noise transcriptions
+    if cleaned.lower() in {n.lower() for n in NOISE_TRANSCRIPTIONS}:
+        return False, "noise_pattern"
+
+    # Check word count (short utterances are often noise)
+    words = cleaned.split()
+    if len(words) < MIN_WORDS_FOR_VALID_SPEECH:
+        return False, f"too_short ({len(words)} words)"
+
+    return True, "valid"
+
+
 def transcribe_audio(wav_file):
     """
     Transcribe audio file using OpenAI Whisper API with retry logic
@@ -1302,11 +1410,8 @@ def main():
 
     while not shutdown_requested:
         try:
-            # LED off = listening for wake word (or follow-up)
-            try:
-                led.off()
-            except:
-                pass
+            # LED off = waiting for wake word (or follow-up)
+            led_idle()
 
             # Check for follow-up speech or wait for wake word
             if in_follow_up_mode and porcupine:
@@ -1338,11 +1443,8 @@ def main():
                 # Fallback: push to talk
                 input("\n🎤 Tryck ENTER och prata... ")
 
-            # LED on = recording
-            try:
-                led.on()
-            except:
-                pass
+            # LED solid = recording/listening
+            led_listening()
 
             print("🔴 Spelar in... (prata nu!)")
 
@@ -1368,10 +1470,20 @@ def main():
             print("🧠 Lyssnar...")
             text = transcribe_audio(wav_file)
 
-            if not text or not text.strip():
+            # Validate transcription is actual speech (not noise)
+            is_valid, reason = is_valid_speech(text)
+
+            if not is_valid:
+                # In follow-up mode: silently exit back to wake word mode
+                # This prevents infinite loops where robot detects its own echo
+                if in_follow_up_mode:
+                    print(f"🔇 Följde upp men hörde inget ({reason})")
+                    in_follow_up_mode = False
+                    continue
+
+                # Normal mode: tell user to try again
                 consecutive_failures += 1
-                in_follow_up_mode = False  # Reset follow-up on failure
-                print("❓ Kunde inte höra något")
+                print(f"❓ Kunde inte höra något ({reason})")
                 # Play retry sound for friendly feedback
                 try:
                     music.sound_play_threading(SOUND_RETRY)
@@ -1407,10 +1519,7 @@ def main():
             # Reset to default position
             reset_car_safe()
 
-            try:
-                led.off()
-            except:
-                pass
+            led_idle()
 
             # Play "your turn" sound - Apple-style state transition
             try:
@@ -1431,10 +1540,7 @@ def main():
             consecutive_failures += 1
             in_follow_up_mode = False  # Reset follow-up on error
             print(f"❌ Oväntat fel: {e}")
-            try:
-                led.off()
-            except:
-                pass
+            led_idle()
             reset_car_safe()
             time.sleep(1)
 
@@ -1456,8 +1562,5 @@ if __name__ == "__main__":
         # Always clean up safely
         print("\n🔧 Stänger ner säkert...")
         reset_car_safe()
-        try:
-            led.off()
-        except:
-            pass
+        led_idle()  # Stop any LED patterns
         print("🛑 Klart! Hejdå!")
