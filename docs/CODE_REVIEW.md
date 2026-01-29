@@ -1,108 +1,89 @@
 # Code Review - Jarvis v5 Implementation
 
-## Critical Bugs Found
+## Status: ALL BUGS FIXED ✓
 
-### 1. Action Name Mismatch
-**Severity:** HIGH - Will break all LLM-triggered actions
-
-SYSTEM_PROMPT tells LLM to use:
-- `move_forward`, `move_backward`, `rock_back_forth`, `tilt_head`, `look_at_person`, `look_around`, `look_up`, `look_down`
-
-ACTIONS dictionary (line 1142) has:
-- `forward`, `backward`, `spin_right`, `spin_left`, `dance`, `nod`, `shake_head`, `stop`
-
-**Result:** When LLM says "ACTIONS: move_forward", nothing happens because key doesn't exist.
-
-**Fix:** Update ACTIONS dict to match SYSTEM_PROMPT action names.
+All critical bugs and warnings have been addressed.
 
 ---
 
-### 2. Duplicate Picarx Instances
-**Severity:** HIGH - Will cause hardware conflicts
+## Fixed Issues
 
-- `voice_assistant.py` line 219: `car = Picarx()`
-- `actions.py` line 12: `px = Picarx()`
+### 1. Action Name Mismatch ✓ FIXED
+**Severity:** HIGH
 
-exploration.py imports `px` from actions.py, but voice_assistant.py uses `car`.
+**Problem:** SYSTEM_PROMPT told LLM to use `move_forward`, `move_backward`, etc. but ACTIONS dict had different names.
 
-**Result:** Two separate Picarx instances controlling the same hardware. Race conditions, conflicts, undefined behavior.
-
-**Fix:** Remove `car = Picarx()` from voice_assistant.py. Import `px` from actions.py and use it everywhere.
+**Fix:** Now imports `ALL_ACTIONS` from actions.py which contains correct names matching SYSTEM_PROMPT.
 
 ---
 
-### 3. actions.py Not Integrated
-**Severity:** MEDIUM - Wasted code
+### 2. Duplicate Picarx Instances ✓ FIXED
+**Severity:** HIGH
 
-The plan called for:
-```python
-from actions import execute_actions, reset_head
+**Problem:** Two separate Picarx instances (`car` in voice_assistant.py, `px` in actions.py) controlling same hardware.
+
+**Fix:** Removed `car = Picarx()` from voice_assistant.py. Now imports `px` from actions.py and uses it everywhere.
+
+---
+
+### 3. actions.py Not Integrated ✓ FIXED
+**Severity:** MEDIUM
+
+**Problem:** voice_assistant.py had duplicate action functions instead of using actions.py.
+
+**Fix:** Now imports `execute_action`, `execute_actions` from actions.py. Duplicate functions removed.
+
+---
+
+### 4. Missing Actions in ACTIONS Dictionary ✓ FIXED
+**Severity:** MEDIUM
+
+**Problem:** SYSTEM_PROMPT referenced actions not in ACTIONS dict.
+
+**Fix:** ALL_ACTIONS in actions.py contains all required actions: `move_forward`, `move_backward`, `rock_back_forth`, `tilt_head`, `look_at_person`, `look_around`, `look_up`, `look_down`, `nod`, `shake_head`, `dance`, `stop`, etc.
+
+---
+
+### 5. exploration_thought_callback Type Mismatch ✓ FIXED
+**Severity:** MEDIUM
+
+**Problem:** exploration.py line 275 passed string `"Hoppla! Någon lyfte mig!"` to callback expecting float.
+
+**Fix:** Removed callback invocation for manual control. Main loop in voice_assistant.py now handles the speech when explore() returns "manual_control".
+
+---
+
+### 6. "manual_control" Return Not Handled ✓ FIXED
+**Severity:** MEDIUM
+
+**Problem:** explore() returns "manual_control" but main loop only handled "wake_word" and "table_mode".
+
+**Fix:** Added handler in voice_assistant.py main loop (line 1991-1994) that speaks "Hoppla! Någon lyfte mig!" and returns to listening mode.
+
+---
+
+## Architecture Summary
+
+```
+actions.py          - Owns single Picarx instance (px), all action functions
+exploration.py      - Imports px from actions, handles autonomous wandering
+memory.py           - Entity-based persistent memory
+voice_assistant.py  - Main app, imports from all modules
 ```
 
-But voice_assistant.py never imports from actions.py. It has its own duplicate action functions.
+## Verification Commands
 
-**Fix:** Replace duplicate functions with imports from actions.py.
+```bash
+# Syntax check
+python3 -m py_compile voice_assistant.py exploration.py actions.py memory.py
 
----
+# Import check (requires Pi hardware)
+python3 -c "from actions import px, ALL_ACTIONS, execute_action"
+```
 
-### 4. Missing Actions in ACTIONS Dictionary
-**Severity:** MEDIUM - Some actions won't work
+## Commits
 
-SYSTEM_PROMPT references these actions that don't exist in ACTIONS dict:
-- `rock_back_forth`
-- `tilt_head`
-- `look_at_person`
-- `look_around`
-- `look_up`
-- `look_down`
-- `move_forward`
-- `move_backward`
-
-**Fix:** Add all action names to ACTIONS dict.
-
----
-
-## Warnings
-
-### 5. exploration_thought_callback passes wrong argument type
-**Location:** Line 1773
-
-The callback passes `novelty` (a float) but sometimes passes a string like "Hoppla! Någon lyfte mig!".
-
-exploration.py line 275: `on_thought_callback("Hoppla! Någon lyfte mig!")`
-exploration.py line 307: `response = on_thought_callback(novelty)`
-
-The callback expects a float but gets a string in the manual control case.
-
-**Fix:** Make callback handle both cases, or have separate callback for manual control.
-
----
-
-### 6. speak_system_event references ACTIONS but doesn't import
-**Location:** Line 506
-
-The function uses `ACTIONS` but doesn't check if action names match what the LLM produces.
-
----
-
-## Fix Plan
-
-### Phase 1: Consolidate Picarx Instance
-1. In voice_assistant.py, add: `from actions import px`
-2. Replace all `car.` with `px.` in voice_assistant.py
-3. Remove the `car = Picarx()` initialization
-
-### Phase 2: Fix Action Names
-1. Update ACTIONS dict to include ALL action names from SYSTEM_PROMPT
-2. Map to functions in actions.py OR keep local functions but with correct names
-3. Add aliases for common variations (forward → move_forward)
-
-### Phase 3: Clean Integration
-1. Import `execute_actions` from actions.py
-2. Remove duplicate action functions from voice_assistant.py
-3. Use `execute_actions(actions, table_mode=current_mode == "table_mode")`
-
-### Phase 4: Test
-1. Syntax check: `python3 -m py_compile voice_assistant.py`
-2. Import check: `python3 -c "import voice_assistant"`
-3. Unit test each action name
+- `bfaa82e` - Jarvis v5: personality, exploration, memory
+- `c283cc1` - Add SunFounder app joystick detection
+- `5fb13de` - Fix integration bugs: single Picarx instance
+- `31cf27b` - Fix callback type mismatch and manual_control handler
