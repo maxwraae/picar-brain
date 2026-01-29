@@ -111,7 +111,7 @@ SPEAKER_DEVICE = "robothat"
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "gpt-4o-mini-tts"
 TTS_VOICE = "onyx"  # Options: alloy, echo, fable, onyx, nova, shimmer (onyx = deep male)
-TTS_SPEED = 1.25  # Speed 0.25-4.0 (1.0 = normal, 1.25 = faster)
+TTS_SPEED = 1.35  # Speed 0.25-4.0 (1.0 = normal, 1.35 = faster)
 TTS_INSTRUCTIONS = "Speak Swedish naturally with energy and playfulness. You are a friendly robot car talking to a 9-year-old boy."
 USE_OPENAI_TTS = True  # Set to False to use Piper instead
 
@@ -292,6 +292,75 @@ def led_idle():
     """Visual: off = waiting for wake word."""
     led_stop_pattern()
 
+# ============== INTERRUPT SYSTEM ==============
+# Allows "Jarvis" to interrupt while robot is speaking
+
+speech_interrupted = threading.Event()
+current_speech_proc = None
+interrupt_listener_active = threading.Event()
+
+def interrupt_listener_thread():
+    """
+    Background thread that listens for wake word during speech.
+    When detected, sets interrupt flag and kills speech process.
+    """
+    global current_speech_proc
+
+    if porcupine is None:
+        return
+
+    try:
+        device_idx = find_usb_mic_pvrecorder()
+        if device_idx is None:
+            for idx in [0, 15, 1, 2]:
+                try:
+                    test_rec = PvRecorder(device_index=idx, frame_length=porcupine.frame_length)
+                    test_rec.delete()
+                    device_idx = idx
+                    break
+                except:
+                    continue
+            if device_idx is None:
+                device_idx = 0
+
+        rec = PvRecorder(device_index=device_idx, frame_length=porcupine.frame_length)
+        rec.start()
+
+        try:
+            while interrupt_listener_active.is_set():
+                pcm = rec.read()
+                result = porcupine.process(pcm)
+
+                if result >= 0:
+                    # Wake word detected during speech!
+                    print("⚡ Avbryter - Jarvis!")
+                    speech_interrupted.set()
+                    # Kill current speech process
+                    if current_speech_proc and current_speech_proc.poll() is None:
+                        current_speech_proc.terminate()
+                    break
+        finally:
+            rec.stop()
+            rec.delete()
+
+    except Exception as e:
+        print(f"⚠️ Interrupt listener error: {e}")
+
+
+def start_interrupt_listener():
+    """Start listening for interrupts in background."""
+    speech_interrupted.clear()
+    interrupt_listener_active.set()
+    t = threading.Thread(target=interrupt_listener_thread, daemon=True)
+    t.start()
+    return t
+
+
+def stop_interrupt_listener():
+    """Stop the interrupt listener."""
+    interrupt_listener_active.clear()
+
+
 # Initialize wake word (Picovoice Porcupine)
 # Try to get access key from keys.py
 try:
@@ -366,11 +435,18 @@ def speak_openai(text):
     """
     Speak using OpenAI TTS with streaming.
     Streams audio chunks directly to aplay for low latency.
+    Can be interrupted by saying "Jarvis".
+    Returns: True (completed), False (error), "interrupted" (wake word detected)
     """
+    global current_speech_proc
+
     for attempt in range(MAX_RETRIES):
         try:
             if attempt > 0:
                 time.sleep(AUDIO_DEVICE_RETRY_DELAY)
+
+            # Start interrupt listener (listens for "Jarvis" during speech)
+            start_interrupt_listener()
 
             # Use streaming response from OpenAI TTS
             with client.audio.speech.with_streaming_response.create(
@@ -388,11 +464,18 @@ def speak_openai(text):
                     stdin=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
+                current_speech_proc = proc
 
                 try:
                     for chunk in response.iter_bytes(chunk_size=4096):
+                        # Check if interrupted by wake word
+                        if speech_interrupted.is_set():
+                            proc.terminate()
+                            stop_interrupt_listener()
+                            return "interrupted"
+
                         if proc.poll() is not None:
-                            # aplay process died
+                            # aplay process died (possibly interrupted)
                             break
                         # Boost volume: unpack samples, amplify, repack
                         samples = np.frombuffer(chunk, dtype=np.int16)
@@ -401,6 +484,12 @@ def speak_openai(text):
 
                     proc.stdin.close()
                     proc.wait(timeout=10)
+                    current_speech_proc = None
+                    stop_interrupt_listener()
+
+                    # Check one more time if interrupted
+                    if speech_interrupted.is_set():
+                        return "interrupted"
 
                     if proc.returncode == 0:
                         return True
@@ -415,6 +504,10 @@ def speak_openai(text):
                         return False
 
                 except BrokenPipeError:
+                    current_speech_proc = None
+                    stop_interrupt_listener()
+                    if speech_interrupted.is_set():
+                        return "interrupted"
                     if attempt < MAX_RETRIES - 1:
                         continue
                     print("❌ Ljuduppspelning avbröts")
@@ -519,10 +612,13 @@ def speak_piper(text):
 def speak(text):
     """
     Main speak function - uses OpenAI TTS by default, falls back to Piper.
+    Returns: True (completed), False (error), "interrupted" (wake word detected)
     """
     if USE_OPENAI_TTS:
-        success = speak_openai(text)
-        if success:
+        result = speak_openai(text)
+        if result == "interrupted":
+            return "interrupted"
+        if result:
             return True
         else:
             print("⚠️ OpenAI TTS misslyckades, provar Piper...")
@@ -730,7 +826,11 @@ def chat_with_gpt(user_message):
                     # Don't speak the ACTIONS line
                     if not sentence.upper().startswith('ACTIONS:'):
                         print(f"💬 {sentence}")
-                        speak(sentence)
+                        result = speak(sentence)
+                        if result == "interrupted":
+                            # User said "Jarvis" - stop talking and return
+                            print("🛑 Avbruten av användaren")
+                            return "interrupted", []
                     sentence_buffer = ""
 
             # Speak any remaining text (if it doesn't end with punctuation)
@@ -738,7 +838,9 @@ def chat_with_gpt(user_message):
                 remaining = sentence_buffer.strip()
                 if not remaining.upper().startswith('ACTIONS:'):
                     print(f"💬 {remaining}")
-                    speak(remaining)
+                    result = speak(remaining)
+                    if result == "interrupted":
+                        return "interrupted", []
 
             # Parse actions from full response
             answer_text, actions = parse_actions(full_response)
@@ -1413,44 +1515,51 @@ def main():
     # Follow-up mode: after robot responds, listen for continuation without wake word
     in_follow_up_mode = False
 
+    # Skip wake word on next iteration (set when user interrupts with "Jarvis")
+    skip_wake_word = False
+
     while not shutdown_requested:
         try:
-            # LED off = waiting for wake word (or follow-up)
-            led_idle()
+            # Check if we should skip wake word (after interrupt)
+            if not skip_wake_word:
+                # LED off = waiting for wake word (or follow-up)
+                led_idle()
 
-            # Check for follow-up speech or wait for wake word
-            if in_follow_up_mode and porcupine:
-                # Listen for follow-up without wake word
-                follow_up_detected = listen_for_follow_up()
-                if not follow_up_detected:
-                    # No follow-up, return to wake word mode
-                    in_follow_up_mode = False
-                    continue
-                # Follow-up detected - skip ding sound, go straight to recording
-                # (already printed "Fortsätter lyssna...")
-            elif porcupine:
-                # Normal wake word mode
-                detected = listen_for_wake_word()
-                if not detected:
-                    consecutive_failures += 1
-                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                        print("\n⚠️ Wake word mikrofon fungerar inte. Prova att starta om mig.")
-                        speak("Jag kan inte höra. Fråga pappa om hjälp.")
-                        break
-                    time.sleep(1)  # Brief pause before retry
-                    continue
-                # Reset failure counter on successful detection
-                consecutive_failures = 0
-                # Ding sound already played in listen_for_wake_word()
-                # Small delay before recording
-                time.sleep(0.3)
+                # Check for follow-up speech or wait for wake word
+                if in_follow_up_mode and porcupine:
+                    # Listen for follow-up without wake word
+                    follow_up_detected = listen_for_follow_up()
+                    if not follow_up_detected:
+                        # No follow-up, return to wake word mode
+                        in_follow_up_mode = False
+                        continue
+                    # Follow-up detected - skip ding sound, go straight to recording
+                    # (already printed "Fortsätter lyssna...")
+                elif porcupine:
+                    # Normal wake word mode
+                    detected = listen_for_wake_word()
+                    if not detected:
+                        consecutive_failures += 1
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                            print("\n⚠️ Wake word mikrofon fungerar inte. Prova att starta om mig.")
+                            speak("Jag kan inte höra. Fråga pappa om hjälp.")
+                            break
+                        time.sleep(1)  # Brief pause before retry
+                        continue
+                    # Reset failure counter on successful detection
+                    consecutive_failures = 0
+                    # Ding sound already played in listen_for_wake_word()
+                    # Small delay before recording
+                    time.sleep(0.3)
+                else:
+                    # Fallback: push to talk
+                    input("\n🎤 Tryck ENTER och prata... ")
             else:
-                # Fallback: push to talk
-                input("\n🎤 Tryck ENTER och prata... ")
+                # Skip wake word - user just interrupted with "Jarvis"
+                skip_wake_word = False
 
             # LED solid = recording/listening
             led_listening()
-
             print("🔴 Spelar in... (prata nu!)")
 
             # Record with VAD
@@ -1506,6 +1615,12 @@ def main():
             # Get GPT response (streaming - speaks sentence-by-sentence)
             print("💭 Tänker...")
             answer, actions = chat_with_gpt(text)
+
+            # Check if user interrupted with "Jarvis"
+            if answer == "interrupted":
+                # Skip wake word detection and go straight to recording
+                skip_wake_word = True
+                continue  # Loop back to recording immediately
 
             # Success - reset failure counter
             consecutive_failures = 0
