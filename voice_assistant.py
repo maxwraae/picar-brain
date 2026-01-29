@@ -111,8 +111,12 @@ SPEAKER_DEVICE = "robothat"
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "gpt-4o-mini-tts"
 TTS_VOICE = "onyx"  # Options: alloy, echo, fable, onyx, nova, shimmer (onyx = deep male)
+TTS_SPEED = 1.15  # Speed 0.25-4.0 (1.0 = normal, 1.15 = slightly faster)
 TTS_INSTRUCTIONS = "Speak Swedish naturally with energy and playfulness. You are a friendly robot car talking to a 9-year-old boy."
 USE_OPENAI_TTS = True  # Set to False to use Piper instead
+
+# Follow-up mode toggle (disable if causing echo/feedback loops)
+ENABLE_FOLLOW_UP = False  # Set to True to enable follow-up without wake word
 
 # ============== USB MICROPHONE AUTO-DETECTION ==============
 
@@ -373,6 +377,7 @@ def speak_openai(text):
                 model=TTS_MODEL,
                 voice=TTS_VOICE,
                 input=text,
+                speed=TTS_SPEED,
                 response_format="pcm",  # Raw 24kHz 16-bit mono PCM
                 instructions=TTS_INSTRUCTIONS,
             ) as response:
@@ -1528,7 +1533,7 @@ def main():
                 print(f"⚠️ Listening sound failed: {e}")
 
             # Enable follow-up mode - listen for continuation without wake word
-            if porcupine:
+            if porcupine and ENABLE_FOLLOW_UP:
                 in_follow_up_mode = True
 
         except KeyboardInterrupt:
