@@ -1988,6 +1988,10 @@ def main():
                         current_mode = "table_mode"
                         speak("Ojdå. Jag står visst på ett bord. Ingen körning nu.")
                         continue
+                    elif result == "manual_control":
+                        current_mode = "listening"
+                        speak("Hoppla! Någon lyfte mig!")
+                        continue
 
                 # Check for follow-up speech or wait for wake word
                 if in_follow_up_mode and porcupine:
