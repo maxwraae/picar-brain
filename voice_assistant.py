@@ -58,13 +58,16 @@ SUBPROCESS_TIMEOUT = 10  # seconds
 AUDIO_DEVICE_RETRY_DELAY = 0.5  # seconds
 
 # Voice Activity Detection (VAD) configuration
-VAD_AGGRESSIVENESS = 2  # 0-3, higher = more aggressive filtering
+VAD_AGGRESSIVENESS = 3  # 0-3, higher = more aggressive filtering (3 = strictest)
 SILENCE_THRESHOLD = 1.5  # seconds of silence to stop recording
 MAX_RECORD_DURATION = 8  # seconds max recording time
 MIN_RECORD_DURATION = 0.5  # seconds minimum before allowing stop
 
 # Follow-up conversation window
-FOLLOW_UP_WINDOW = 5.0  # seconds to listen for follow-up without wake word
+FOLLOW_UP_WINDOW = 3.0  # seconds to listen for follow-up without wake word (reduced from 5)
+
+# TTS volume boost (OpenAI TTS is quieter than sound effects)
+TTS_VOLUME_BOOST = 3.0  # Multiply amplitude by this factor
 
 # Sound effects paths
 SOUNDS_DIR = "/home/pi/picar-brain/sounds"
@@ -302,7 +305,10 @@ def speak_openai(text):
                         if proc.poll() is not None:
                             # aplay process died
                             break
-                        proc.stdin.write(chunk)
+                        # Boost volume: unpack samples, amplify, repack
+                        samples = np.frombuffer(chunk, dtype=np.int16)
+                        boosted = np.clip(samples * TTS_VOLUME_BOOST, -32768, 32767).astype(np.int16)
+                        proc.stdin.write(boosted.tobytes())
 
                     proc.stdin.close()
                     proc.wait(timeout=10)
@@ -1175,7 +1181,7 @@ def listen_for_follow_up():
     PVRECORDER_FRAME_LENGTH = 512
 
     # Speech detection threshold - need several consecutive speech frames
-    SPEECH_FRAMES_THRESHOLD = 3  # ~90ms of speech to trigger
+    SPEECH_FRAMES_THRESHOLD = 6  # ~180ms of speech to trigger (stricter to avoid false positives)
 
     try:
         # Initialize VAD
