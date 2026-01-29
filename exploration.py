@@ -270,9 +270,8 @@ def explore(
                     print(f"Manual control detected! Distance: {distance}cm, Change: {distance_change}cm")
                     stop_moving()
 
-                    # Notify via callback
-                    if on_thought_callback:
-                        on_thought_callback("Hoppla! Någon lyfte mig!")
+                    # Just print, let main loop handle speech
+                    print("Manual control: Robot picked up or pushed")
 
                     return "manual_control"
 
