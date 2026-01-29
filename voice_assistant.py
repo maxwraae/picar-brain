@@ -111,7 +111,7 @@ SPEAKER_DEVICE = "robothat"
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "gpt-4o-mini-tts"
 TTS_VOICE = "onyx"  # Options: alloy, echo, fable, onyx, nova, shimmer (onyx = deep male)
-TTS_SPEED = 1.15  # Speed 0.25-4.0 (1.0 = normal, 1.15 = slightly faster)
+TTS_SPEED = 1.25  # Speed 0.25-4.0 (1.0 = normal, 1.25 = faster)
 TTS_INSTRUCTIONS = "Speak Swedish naturally with energy and playfulness. You are a friendly robot car talking to a 9-year-old boy."
 USE_OPENAI_TTS = True  # Set to False to use Piper instead
 
