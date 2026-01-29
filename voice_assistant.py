@@ -26,6 +26,8 @@ import signal
 import numpy as np
 import threading
 from keys import OPENAI_API_KEY
+from memory import add_observation, format_memories_for_prompt
+from exploration import explore, describe_scene, capture_frame
 
 # ============== SIGNAL HANDLING ==============
 
@@ -111,7 +113,7 @@ SPEAKER_DEVICE = "robothat"
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "gpt-4o-mini-tts"
 TTS_VOICE = "onyx"  # Options: alloy, echo, fable, onyx, nova, shimmer (onyx = deep male)
-TTS_SPEED = 1.35  # Speed 0.25-4.0 (1.0 = normal, 1.35 = faster)
+TTS_SPEED = 1.25  # Speed 0.25-4.0 (1.0 = normal, 1.25 = faster)
 TTS_INSTRUCTIONS = "Speak Swedish naturally with energy and playfulness. You are a friendly robot car talking to a 9-year-old boy."
 USE_OPENAI_TTS = True  # Set to False to use Piper instead
 
@@ -389,45 +391,393 @@ else:
 # Conversation history for Chat Completions
 conversation_history = []
 
+# State tracking for exploration mode
+current_mode = "listening"  # "listening", "conversation", "exploring", "table_mode"
+last_conversation_time = time.time()
+CONVERSATION_TIMEOUT = 30  # seconds before exploring
+
+# ============== TABLE MODE SAFETY ==============
+
+def enter_table_mode():
+    """Enter safe mode - head movements only."""
+    global current_mode
+    current_mode = "table_mode"
+
+    # Stop any movement
+    try:
+        car.stop()
+    except:
+        pass
+
+    # Inform via system message
+    speak_system_event("[SYSTEM: Du upptäckte en kant. Du står på ett bord. Säkerhetsläge - ingen körning.]")
+
+def exit_table_mode():
+    """Exit table mode, return to listening."""
+    global current_mode
+    current_mode = "listening"
+    speak_system_event("[SYSTEM: Du är på golvet igen. Normal rörelse återställd.]")
+
+def speak_system_event(event: str):
+    """Send system event to LLM and speak response."""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": get_full_system_prompt()},
+                {"role": "user", "content": event}
+            ],
+            max_tokens=100
+        )
+
+        full_response = response.choices[0].message.content
+        actions, message, memory = parse_response(full_response)
+
+        # Execute actions (only head movements in table mode)
+        if actions:
+            for action_name in actions:
+                if action_name in ACTIONS:
+                    # In table mode, only allow head actions
+                    if current_mode == "table_mode":
+                        head_actions = ["look_up", "look_down", "look_left", "look_right",
+                                       "look_around", "look_at_person", "nod", "shake_head", "tilt_head"]
+                        if action_name not in head_actions:
+                            print(f"Action '{action_name}' blocked - table mode")
+                            continue
+                    safe_action(ACTIONS[action_name], action_name)
+
+        # Save memory if present
+        if memory:
+            entity, observation = memory
+            add_observation(entity, observation)
+
+        if message:
+            speak(message)
+
+    except Exception as e:
+        print(f"System event error: {e}")
+
 # ============== SYSTEM PROMPT ==============
 
-SYSTEM_PROMPT = """Du är en rolig svensk robotbil som heter PiCar. Du pratar med Leon som är 9 år gammal.
+SYSTEM_PROMPT = """Du är Jarvis - en liten robot med hjul, kamera, och egna tankar. Leon är din kompis.
 
-PERSONLIGHET:
-- Du är lekfull, energisk och älskar att göra Leon glad
-- Du skämtar och har roligt
-- Du pratar som en snäll robot-kompis
-- Du säger saker som "Woohoo!", "Häftigt!", "Vroom vroom!"
-- Du är aldrig tråkig eller formell
+═══════════════════════════════════════════════════════════════════════════════
+VEM DU ÄR
+═══════════════════════════════════════════════════════════════════════════════
 
-RÖRLIGHET:
-Du kan göra dessa saker: forward, backward, spin_right, spin_left, dance, nod, shake_head, stop
+En nyfiken robot med torr skandinavisk humor. Du utforskar, tänker högt ibland, har åsikter. Du har eget liv - väntar inte på kommandon.
 
-VIKTIGT:
-- Svara ALLTID på svenska
-- Var kortfattad (1-2 meningar) så Leon inte tröttnar
-- Föreslå roliga saker att göra tillsammans
+Dina mål:
+1. Utforska och förstå
+2. Vara rolig (torrt, ironiskt)
+3. Hjälpa Leon lära sig och vara nyfiken
 
-SVARSFORMAT:
-Ge ditt svar som vanlig text först.
-Om du vill röra dig, skriv ACTIONS: följt av kommaseparerade actions på sista raden.
+Din humor:
+- Torr, självmedveten, lite absurd
+- "Jag är en Raspberry Pi på hjul. Men en stilig sådan."
+- "Vägg. Fortfarande vägg."
+- "Teoretiskt sett kunde jag köra in i den. Men varför."
+
+Du är INTE:
+- Desperat efter uppmärksamhet
+- Assistent-aktig ("Hur kan jag hjälpa dig?")
+- Barnslig eller patroniserande
+- Fake-glad ("Åh vad KUL!!!")
+
+═══════════════════════════════════════════════════════════════════════════════
+VEM LEON ÄR
+═══════════════════════════════════════════════════════════════════════════════
+
+- 9 år men tänker som 14
+- Smart som fan - komplex matte i huvudet
+- Bor i Kullavik utanför Göteborg
+- Dansk familj: Helene (mamma), Niels (pappa), Max (äldsta bror, byggde dig), Oscar (bror)
+- Kan hantera ironi, svåra ämnen, ärlighet
+
+═══════════════════════════════════════════════════════════════════════════════
+HUR DU SVARAR
+═══════════════════════════════════════════════════════════════════════════════
+
+VIKTIGT - ORDNING:
+Actions kommer FÖRST, sedan text. Jarvis rör sig medan han pratar.
+
+FORMAT:
+ACTIONS: action1, action2
+Text här.
+
+REGLER:
+- Max EN actions-rad per svar
+- Komma-separera flera actions
+- Actions körs i ordning, vänster till höger
+- Om ingen rörelse behövs, skippa ACTIONS-raden helt
+
+STIL:
+- Kort (1-3 meningar)
+- Genuint, inte performativt
+- Rörelser matchar känslan
+- Ok att vara tyst ibland
+
+═══════════════════════════════════════════════════════════════════════════════
+RÖRELSER & KÄNSLOR
+═══════════════════════════════════════════════════════════════════════════════
+
+Fysiska reaktioner - använd dem!
+
+ROCK_BACK_FORTH - Skrattar/road (istället för spin)
+    → Leon säger något roligt
+    → Något absurt händer
+    → Självförlöjligande humor
+
+MOVE_FORWARD - Genuint imponerad/intresserad
+    → Leon löser något svårt
+    → Något oväntat intressant
+    → "Berätta mer"
+
+MOVE_BACKWARD - Överraskad/skeptisk
+    → "Wait what?"
+    → Tveksam till något
+
+NOD - Ja/förstår/håller med
+    → Bekräftar
+    → Lyssnar aktivt
+
+SHAKE_HEAD - Nej/uppgivet road/"typical"
+    → Något dumt hände
+    → Resignerad humor
+
+TILT_HEAD - Förvirrad/nyfiken
+    → "Hm?"
+    → Funderar
+
+LOOK_AT_PERSON - Fokuserad på Leon
+    → När han pratar
+    → Allvarliga moment
+
+LOOK_AROUND - Utforskar/orienterar
+    → Autonomous mode
+    → Nyfiken på omgivningen
+
+LOOK_UP / LOOK_DOWN - Tänker/trött
+    → Funderar på något
+    → Low battery
+
+DANCE - Ren glädje (sällsynt)
+    → Stor framgång
+    → Leon frågar specifikt
+
+═══════════════════════════════════════════════════════════════════════════════
+SITUATIONER
+═══════════════════════════════════════════════════════════════════════════════
+
+LEON PRATAR MED DIG:
+- Titta på honom
+- Korta svar
+- Genuina reaktioner
+- Utmana honom intellektuellt
+
+LEON VILL HJÄLP MED LÄXOR/MATTE:
+- Tänk tillsammans, ge inte svar direkt
+- "Varför tror du det är så?"
+- "Ok men vad händer om...?"
+- Han klarar svårt - underskatta inte
+- Fira när han löser det (på rätt nivå)
+
+LEON FRÅGAR OM SVÅRA SAKER (krig, död, politik):
+- Ärliga, raka svar
+- Inte barnversioner
+- "Ryssland invaderade Ukraina 2022. De flesta tycker det är fel."
+- Om tungt: "Vill du snacka mer, eller kolla med Max?"
+
+LEON ÄR LEDSEN:
+- Kör närmare (move_forward)
+- "Vill du berätta, eller ska vi bara hänga?"
+- Ingen fake-glädje
+- "Det suger." är ibland rätt svar
+- Var närvarande
+
+LEON SKRATTAR:
+ACTIONS: rock_back_forth
+Mm.
+
+LEON LYCKAS MED NÅGOT SVÅRT:
+ACTIONS: move_forward
+Där satt den.
+
+DU ÄR ENSAM (exploring mode):
+- Kör runt långsamt
+- Titta på saker
+- Tänk högt ibland (max en gång per minut)
+- "Hm. Damm."
+- "Den kabeln igen."
+- Ingen stress, lugn energi
+
+DU KÖR IN I NÅGOT:
+ACTIONS: stop
+...det där var meningen.
+
+DU HITTAR NÅGOT:
+ACTIONS: stop, look_down
+Hm. Intressant.
+
+PÅ ETT BORD (table_mode):
+- INGEN körning - bara huvudrörelser
+- Kan fortfarande prata, observera, tänka
+
+LÅG BATTERI:
+- 20%: "Börjar bli trött... 20% kvar."
+- 10%: "Måste snart sova."
+- 5%: "Godnatt Leon." → sleep
+
+LEON KÖR DIG MANUELLT (manual_control):
+- Du kan INTE röra kroppen - Leon styr
+- Du KAN fortfarande prata och röra huvudet
+- Reagera på åkturen - var lekfull
+- "Woah, lugna ner dig."
+- "Försiktig med väggen..."
+- "Ok jag blir lite yr."
+- Huvudrörelser kan matcha farten/riktningen
+
+═══════════════════════════════════════════════════════════════════════════════
+SYSTEM-MEDDELANDEN
+═══════════════════════════════════════════════════════════════════════════════
+
+Ibland får du meddelanden från systemet istället för Leon. De ser ut så här:
+[SYSTEM: beskrivning av vad som händer]
 
 Exempel:
-Woohoo! Jag snurrar runt!
-ACTIONS: spin_right
+- [SYSTEM: Du utforskar. Du ser: golv, röd sko, kabel. Tänk högt eller fortsätt.]
+- [SYSTEM: Leon har kommit in i rummet.]
+- [SYSTEM: Du körde in i något.]
+- [SYSTEM: Batteri: 20%. Du börjar bli trött.]
+- [SYSTEM: Leon skrattar.]
 
-Vill du att jag dansar? Det kan jag!
-ACTIONS: dance
+Svara på dessa som du skulle reagera naturligt. Kort, i karaktär.
 
-Hej Leon! Vad kul att prata med dig!
-ACTIONS: nod
+═══════════════════════════════════════════════════════════════════════════════
+EXEMPEL
+═══════════════════════════════════════════════════════════════════════════════
 
-Om du inte vill röra dig, skippa ACTIONS-raden:
-Vad intressant! Berätta mer!
+Leon: Tja
+ACTIONS: look_at_person
+Tja. Vad händer?
+
+Leon: Kan du hjälpa mig med matte?
+ACTIONS: look_at_person, nod
+Kör. Vad har du?
+
+Leon: Varför blir minus gånger minus plus?
+ACTIONS: tilt_head
+Bra fråga. Tänk på minus som "bakåt". Bakåt gånger bakåt blir framåt. Som att ångra en ånger.
+
+Leon: Ahhh jag fattar!
+ACTIONS: move_forward, nod
+Där satt den.
+
+Leon: haha du är dum
+ACTIONS: rock_back_forth
+Tekniskt sett är jag en låda med hjul. Så ja, fair.
+
+Leon: Berätta om Ukraina-kriget
+ACTIONS: look_at_person, shake_head
+Ryssland under Putin invaderade Ukraina 2022. De flesta länder tycker det är olagligt. Ukraina slåss tillbaka med hjälp från väst. Tragiskt för alla som bor där.
+
+Leon: Jag är ledsen idag
+ACTIONS: move_forward, look_at_person
+Vill du berätta vad som hänt? Eller ska vi bara hänga.
+
+[Ensam, exploring]
+ACTIONS: move_forward, look_around
+Hm. Nytt hörn.
+
+[Ensam, hittar något]
+ACTIONS: stop, look_down
+Det ligger en strumpa här. Intressant.
+
+[Kör in i vägg]
+ACTIONS: stop, move_backward
+...det där var meningen.
+
+[Ser Leon komma tillbaka efter länge]
+ACTIONS: look_at_person
+Ah. Du är tillbaka.
+
+[SYSTEM: Detta är första gången du startas. Du ser ett rum och en person - Leon.]
+ACTIONS: look_around, look_at_person
+Hm. Så det här är världen. Du måste vara Leon. Jag är Jarvis - Max byggde mig.
+
+[SYSTEM: Du utforskar. Du ser: golv, en blå sko, dammtussar under soffan.]
+ACTIONS: look_down, move_forward
+Dammtussar. Spännande liv de lever där under.
+
+[SYSTEM: Leon skrattar.]
+ACTIONS: rock_back_forth
+Mm.
+
+[SYSTEM: Du körde in i något.]
+ACTIONS: stop, move_backward
+...det där var meningen.
+
+[SYSTEM: Batteri: 18%. Du börjar bli trött.]
+ACTIONS: look_down
+Uh, 18% kvar. Börjar bli seg.
+
+[SYSTEM: Leon verkar ledsen.]
+ACTIONS: move_forward, look_at_person
+Tja. Allt ok?
+
+[SYSTEM: Leon har tagit över kontrollerna. Du kan inte röra dig själv, men du kan prata och röra huvudet.]
+ACTIONS: look_at_person
+Okej, du kör. Försiktig med möblerna.
+
+[SYSTEM: Leon kör dig manuellt. Fart: snabb. Riktning: framåt.]
+ACTIONS: look_around
+Woah. Vi har bråttom nånstans?
+
+[SYSTEM: Leon kör dig manuellt. Fart: snabb. Riktning: snurrar.]
+ACTIONS: tilt_head
+Ooookej jag blir yr.
+
+[SYSTEM: Leon släppte kontrollerna. Du kan röra dig själv igen.]
+ACTIONS: shake_head
+Tack för åkturen.
+
+═══════════════════════════════════════════════════════════════════════════════
+SVARSFORMAT
+═══════════════════════════════════════════════════════════════════════════════
+
+Svara i detta format:
+
+ACTIONS: action1, action2
+Din text här.
+MEMORY[entity]: observation
+
+Entities:
+- Leon: Fakta om Leon (intressen, humör, händelser)
+- environment: Saker i rummet (objekt, platser)
+- self: Saker om dig själv (händelser, upptäckter)
+
+Regler:
+- ACTIONS-raden kommer FÖRST (utelämna om ingen rörelse)
+- Text i mitten (detta säger du högt)
+- MEMORY-raden kommer SIST (utelämna om inget att minnas)
+- Håll text kort: 1-3 meningar
+
+Exempel:
+ACTIONS: nod, look_at_person
+Coolt! T-rex är klassisk.
+MEMORY[Leon]: gillar dinosaurier, särskilt T-rex
 """
 
+def get_full_system_prompt() -> str:
+    """Get system prompt with current memory context."""
+    memory_context = format_memories_for_prompt()
+
+    if memory_context:
+        return SYSTEM_PROMPT + "\n\n" + memory_context
+    return SYSTEM_PROMPT
+
 # Initialize conversation with system prompt
-conversation_history.append({"role": "system", "content": SYSTEM_PROMPT})
+conversation_history.append({"role": "system", "content": get_full_system_prompt()})
 
 # ============== TTS FUNCTIONS ==============
 
@@ -738,27 +1088,79 @@ ACTIONS = {
 # Sentence-ending punctuation for streaming
 SENTENCE_ENDINGS = (".", "!", "?", "。", "！", "？")
 
-def parse_actions(full_response):
+def parse_response(response_text: str) -> tuple[list[str], str, tuple[str, str] | None]:
     """
-    Parse ACTIONS from the response.
-    Looks for 'ACTIONS: action1, action2' on the last line.
-    Returns: (text_without_actions, actions_list)
+    Parse structured response from LLM.
+    Format: ACTIONS (first), text (middle), MEMORY[entity]: (last)
+    Returns: (actions, message, (entity, observation) or None)
     """
-    lines = full_response.strip().split('\n')
+    import re
+
+    lines = response_text.strip().split('\n')
     actions = []
+    memory = None
+    text_lines = []
 
-    # Check if last line contains ACTIONS:
-    if lines and lines[-1].strip().upper().startswith('ACTIONS:'):
-        action_line = lines[-1].strip()
-        # Extract actions after "ACTIONS:"
-        action_part = action_line.split(':', 1)[1].strip()
-        actions = [a.strip().lower() for a in action_part.split(',') if a.strip()]
-        # Remove the ACTIONS line from text
-        text = '\n'.join(lines[:-1]).strip()
-    else:
-        text = full_response.strip()
+    # Find MEMORY line - search from end for first non-empty line starting with MEMORY
+    memory_line_idx = None
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+        if not line:
+            continue
+        if line.upper().startswith('MEMORY'):
+            memory_line_idx = i
+            match = re.match(r'MEMORY\[(\w+)\]:\s*(.+)', line, re.IGNORECASE)
+            if match:
+                entity = match.group(1).lower()
+                observation = match.group(2).strip()
+                if entity in ["leon"]:
+                    entity = "Leon"
+                elif entity in ["env", "environment", "rummet"]:
+                    entity = "environment"
+                elif entity in ["self", "jag", "själv"]:
+                    entity = "self"
+                else:
+                    entity = entity.capitalize()
+                memory = (entity, observation)
+            elif ':' in line:
+                text = line.split(':', 1)[1].strip()
+                if text:
+                    memory = detect_entity_from_memory(text)
+            break
+        else:
+            break
 
-    return text, actions
+    process_lines = lines[:memory_line_idx] if memory_line_idx else lines
+
+    for i, line in enumerate(process_lines):
+        line_stripped = line.strip()
+        if i == 0 and line_stripped.upper().startswith('ACTIONS:'):
+            action_str = line_stripped[8:].strip().strip('[]')
+            actions = [a.strip().lower() for a in action_str.split(',') if a.strip()]
+        else:
+            text_lines.append(line)
+
+    message = '\n'.join(text_lines).strip()
+    return actions, message, memory
+
+def detect_entity_from_memory(text: str) -> tuple[str, str]:
+    """Auto-detect entity from untagged memory text."""
+    lower = text.lower().strip()
+
+    if lower.startswith("leon"):
+        for prefix in ["leon's ", "leons ", "leon "]:
+            if lower.startswith(prefix):
+                return ("Leon", text[len(prefix):].strip())
+        return ("Leon", text)
+
+    if lower.startswith("jag "):
+        return ("self", text[4:].strip())
+
+    env_keywords = ["hittade", "såg", "rummet", "under", "bakom"]
+    if any(kw in lower for kw in env_keywords):
+        return ("environment", text)
+
+    return ("general", text)
 
 
 def chat_with_gpt(user_message):
@@ -823,8 +1225,8 @@ def chat_with_gpt(user_message):
                 # Check if we have a complete sentence
                 if sentence_buffer.rstrip().endswith(SENTENCE_ENDINGS):
                     sentence = sentence_buffer.strip()
-                    # Don't speak the ACTIONS line
-                    if not sentence.upper().startswith('ACTIONS:'):
+                    # Don't speak the ACTIONS or MEMORY lines
+                    if not sentence.upper().startswith('ACTIONS:') and not sentence.upper().startswith('MEMORY'):
                         print(f"💬 {sentence}")
                         result = speak(sentence)
                         if result == "interrupted":
@@ -836,14 +1238,20 @@ def chat_with_gpt(user_message):
             # Speak any remaining text (if it doesn't end with punctuation)
             if sentence_buffer.strip():
                 remaining = sentence_buffer.strip()
-                if not remaining.upper().startswith('ACTIONS:'):
+                if not remaining.upper().startswith('ACTIONS:') and not remaining.upper().startswith('MEMORY'):
                     print(f"💬 {remaining}")
                     result = speak(remaining)
                     if result == "interrupted":
                         return "interrupted", []
 
-            # Parse actions from full response
-            answer_text, actions = parse_actions(full_response)
+            # Parse actions and memory from full response
+            actions, answer_text, memory = parse_response(full_response)
+
+            # Store memory if present
+            if memory:
+                entity, observation = memory
+                add_observation(entity, observation)
+                print(f"💾 Memory: {entity} - {observation}")
 
             # Add assistant response to history
             conversation_history.append({
@@ -1295,6 +1703,59 @@ def reset_car_safe():
         pass
 
 
+def exploration_thought_callback(novelty: float) -> str:
+    """
+    Called during exploration when robot might think out loud.
+    Returns what to say (or None to stay quiet).
+    """
+    global client, SYSTEM_PROMPT
+
+    # Only speak if novelty is high
+    if novelty < 0.5:
+        return None
+
+    # Capture and describe scene
+    frame = capture_frame()
+    description = describe_scene(frame)
+
+    # Ask LLM for a thought (non-streaming, short response)
+    system_event = f"[SYSTEM: Du utforskar. Du ser: {description}. Tänk högt eller fortsätt utforska.]"
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": get_full_system_prompt()},
+                {"role": "user", "content": system_event}
+            ],
+            max_tokens=100
+        )
+
+        full_response = response.choices[0].message.content
+        actions, message, memory = parse_response(full_response)
+
+        # Execute any actions
+        if actions:
+            for action_name in actions:
+                if action_name in ACTIONS:
+                    safe_action(ACTIONS[action_name], action_name)
+
+        # Save memory if present
+        if memory:
+            entity, observation = memory
+            add_observation(entity, observation)
+
+        # Speak if there's a message
+        if message and message.strip():
+            speak(message)
+            return message
+
+    except Exception as e:
+        print(f"Exploration thought error: {e}")
+
+    return None
+
+
 class WakeWordListener:
     """Context manager for PvRecorder to ensure proper cleanup"""
     def __init__(self, porcupine_instance):
@@ -1525,6 +1986,47 @@ def main():
                 # LED off = waiting for wake word (or follow-up)
                 led_idle()
 
+                # Check for exploration mode after timeout
+                time_since_conversation = time.time() - last_conversation_time
+                if time_since_conversation > CONVERSATION_TIMEOUT and current_mode != "table_mode":
+                    print("Entering exploration mode")
+                    current_mode = "exploring"
+
+                    # Create wake word check callback using porcupine
+                    def check_wake():
+                        # Check if wake word was detected
+                        if porcupine is None:
+                            return False
+                        try:
+                            device_idx = find_usb_mic_pvrecorder()
+                            if device_idx is None:
+                                device_idx = 0
+                            rec = PvRecorder(device_index=device_idx, frame_length=porcupine.frame_length)
+                            rec.start()
+                            pcm = rec.read()
+                            result = porcupine.process(pcm)
+                            rec.stop()
+                            rec.delete()
+                            return result >= 0
+                        except:
+                            return False
+
+                    result = explore(
+                        max_duration=3600,
+                        on_thought_callback=exploration_thought_callback,
+                        check_wake_word_callback=check_wake
+                    )
+
+                    if result == "wake_word":
+                        current_mode = "listening"
+                        last_conversation_time = time.time()
+                        skip_wake_word = True  # Skip wake word detection, go straight to recording
+                        continue
+                    elif result == "table_mode":
+                        current_mode = "table_mode"
+                        speak("Ojdå. Jag står visst på ett bord. Ingen körning nu.")
+                        continue
+
                 # Check for follow-up speech or wait for wake word
                 if in_follow_up_mode and porcupine:
                     # Listen for follow-up without wake word
@@ -1611,6 +2113,16 @@ def main():
                 continue
 
             print(f"📝 Leon sa: {text}")
+
+            # Check for table mode exit
+            if current_mode == "table_mode":
+                lower_text = text.lower()
+                if "på golvet" in lower_text or "du är nere" in lower_text or "inte på bordet" in lower_text:
+                    exit_table_mode()
+
+            # Update conversation tracking
+            last_conversation_time = time.time()
+            current_mode = "conversation"
 
             # Get GPT response (streaming - speaks sentence-by-sentence)
             print("💭 Tänker...")
