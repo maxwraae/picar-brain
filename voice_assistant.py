@@ -72,6 +72,7 @@ SOUND_DING = f"{SOUNDS_DIR}/ding.wav"        # Wake word detected (0.12s)
 SOUND_THINKING = f"{SOUNDS_DIR}/thinking.wav" # During GPT processing (3s)
 SOUND_RETRY = f"{SOUNDS_DIR}/retry.wav"       # On errors (0.27s)
 SOUND_READY = f"{SOUNDS_DIR}/ready.wav"       # On startup (0.5s)
+SOUND_LISTENING = f"{SOUNDS_DIR}/listening.wav"  # Your turn / ready to listen (0.2s)
 
 # Wake word configuration (Picovoice)
 # Get free access key from https://console.picovoice.ai
@@ -1404,6 +1405,12 @@ def main():
                 led.off()
             except:
                 pass
+
+            # Play "your turn" sound - Apple-style state transition
+            try:
+                music.sound_play_threading(SOUND_LISTENING)
+            except Exception as e:
+                print(f"⚠️ Listening sound failed: {e}")
 
             # Enable follow-up mode - listen for continuation without wake word
             if porcupine:
