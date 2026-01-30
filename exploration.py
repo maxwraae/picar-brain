@@ -18,10 +18,11 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SAFE_DISTANCE = 40      # cm - safe to move forward
-DANGER_DISTANCE = 20    # cm - must turn or back up
-EXPLORE_SPEED = 25      # slower than normal
-BACKUP_SPEED = 30
+SAFE_DISTANCE = 30      # cm - safe to move forward (was 40)
+DANGER_DISTANCE = 15    # cm - must turn or back up (was 20)
+EXPLORE_SPEED = 20      # slower exploration (was 25)
+BACKUP_SPEED = 20       # slower backup (was 30)
+DEBUG_DISTANCE = True   # Print distance readings
 THOUGHT_INTERVAL_MIN = 30   # seconds between thoughts
 THOUGHT_INTERVAL_MAX = 60
 MAX_EXPLORE_DURATION = 3600  # 1 hour max
@@ -262,6 +263,8 @@ def explore(
 
             # Get distance
             distance = get_distance()
+            if DEBUG_DISTANCE:
+                print(f"📏 Distance: {distance:.1f}cm")
 
             # MANUAL CONTROL DETECTION: Disabled due to sensor noise
             # if MANUAL_CONTROL_ENABLED and previous_distance is not None:
@@ -275,15 +278,18 @@ def explore(
 
             # DANGER ZONE: Too close, back up
             if distance < DANGER_DISTANCE:
+                print(f"⚠️ DANGER ({distance:.0f}cm < {DANGER_DISTANCE}) - backing up")
                 backup_and_turn()
                 continue
 
             # CAUTION ZONE: Getting close, turn slightly
             if distance < SAFE_DISTANCE:
+                print(f"🔶 CAUTION ({distance:.0f}cm < {SAFE_DISTANCE}) - turning")
                 turn_slightly()
                 continue
 
             # SAFE ZONE: Move forward
+            print(f"✅ SAFE ({distance:.0f}cm) - forward")
             move_forward_slow()
 
             # THOUGHT CHECK: Time for a thought?
