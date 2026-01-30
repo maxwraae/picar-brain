@@ -2005,15 +2005,10 @@ def main():
                     # Follow-up detected - skip ding sound, go straight to recording
                     # (already printed "Fortsätter lyssna...")
                 elif porcupine:
-                    # Normal wake word mode
-                    detected = listen_for_wake_word()
+                    # Normal wake word mode - timeout allows exploration check
+                    detected = listen_for_wake_word(timeout=CONVERSATION_TIMEOUT)
                     if not detected:
-                        consecutive_failures += 1
-                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                            print("\n⚠️ Wake word mikrofon fungerar inte. Prova att starta om mig.")
-                            speak("Jag kan inte höra. Fråga pappa om hjälp.")
-                            break
-                        time.sleep(1)  # Brief pause before retry
+                        # Timeout is normal - just loop back to check exploration
                         continue
                     # Reset failure counter on successful detection
                     consecutive_failures = 0
