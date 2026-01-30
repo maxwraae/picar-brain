@@ -259,14 +259,14 @@ def explore(
                 stop_moving()
                 return "wake_word"
 
-            # SAFETY: Check for cliff
-            if is_cliff_detected():
-                print("Cliff detected!")
-                stop_moving()
-                px.backward(BACKUP_SPEED)
-                time.sleep(0.3)
-                px.stop()
-                return "table_mode"
+            # SAFETY: Check for cliff - DISABLED (sensor unreliable)
+            # if is_cliff_detected():
+            #     print("Cliff detected!")
+            #     stop_moving()
+            #     px.backward(BACKUP_SPEED)
+            #     time.sleep(0.3)
+            #     px.stop()
+            #     return "table_mode"
 
             # Get distance
             distance = get_distance()
