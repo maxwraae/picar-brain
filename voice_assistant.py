@@ -1897,6 +1897,7 @@ def main():
     Say "Hey Jarvis" (or your custom wake word) to activate.
     Falls back to push-to-talk if wake word model fails to load.
     """
+    global current_mode, last_conversation_time
 
     print("=" * 50)
     print("PiCar Röstassistent - Redo för Leon!")
