@@ -10,8 +10,9 @@ import numpy as np
 import base64
 from openai import OpenAI
 from actions import px  # Use shared Picarx instance from actions module
+from keys import OPENAI_API_KEY
 
-client = OpenAI()  # Uses OPENAI_API_KEY from environment
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS
