@@ -7,48 +7,52 @@ Voice-controlled robot car for Leon (9 years old). Swedish language, wake word a
 | Item | Value |
 |------|-------|
 | Hardware | Raspberry Pi 5 + PiCar-X chassis |
-| Pi hostname | `picar.lan` (NOT picar.local) |
+| Pi hostname | `picar.local` |
 | Pi user | `pi` |
-| Pi password | `Leon` |
+| Pi password | `leon` |
 | Pi IP | `192.168.1.101` (may change) |
 | Project path on Pi | `/home/pi/picar-brain` |
-| Service name | `voice` |
+| App control service | `picar-app` (for SunFounder app) |
+| Voice service | `voice` (voice assistant) |
 | Wake word | "Jarvis" |
+
+## Connect to Pi
+
+```bash
+ssh pi@picar.local
+# Password: leon
+
+# Or with sshpass:
+sshpass -p 'leon' ssh pi@picar.local
+```
 
 ## Deployment
 
-**From Mac (this repo):**
+**From Mac (this repo at `~/picar-setup/picar-brain/`):**
 ```bash
 git add -A && git commit -m "message" && git push
 ```
 
 **On the Pi:**
 ```bash
-cd /home/pi/picar-brain && git pull && sudo systemctl restart voice
+cd ~/picar-brain && git pull
+sudo systemctl restart picar-app  # For SunFounder app
+# OR
+sudo systemctl restart voice      # For voice assistant
 ```
 
 **Check service status:**
 ```bash
-sudo systemctl status voice
-journalctl -u voice -f  # Live logs
+sudo systemctl status picar-app
+journalctl -u picar-app -f  # Live logs
 ```
 
-## SSH Setup
+## SunFounder App Connection
 
-```bash
-# Connect to Pi
-ssh pi@picar.lan
-# Password: Leon
-
-# To set up key auth (one time):
-ssh-copy-id pi@picar.lan
-```
-
-If hostname doesn't resolve, find Pi IP:
-```bash
-arp -a | grep -i pi
-# or check router DHCP leases
-```
+1. Open SunFounder PiCar-X app on phone
+2. Connect to same WiFi as Pi
+3. Enter Pi IP: `192.168.1.101` (or find with `ping picar.local`)
+4. App connects on port 8765
 
 ## Architecture
 
@@ -107,14 +111,14 @@ MIN_WORDS_FOR_VALID_SPEECH = 2
 NOISE_TRANSCRIPTIONS = {...}  # Common Whisper hallucinations
 
 # TTS
-TTS_MODEL = "gpt-4o-mini-tts"
+TTS_MODEL = "tts-1"
 TTS_VOICE = "onyx"          # Deep male voice
 TTS_VOLUME_BOOST = 3.0      # Amplify for small speaker
 USE_OPENAI_TTS = True       # False = use Piper (local, lower quality)
 
 # Hardware
-SPEAKER_DEVICE = "robothat"
-MIC_DEVICE = auto-detected USB mic
+SPEAKER_DEVICE = "plughw:2,0"  # Robot-hat speaker (card 2)
+MIC_DEVICE = "plughw:3,0"      # USB mic (card 3)
 ```
 
 ## LED Patterns
