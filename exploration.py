@@ -169,7 +169,7 @@ def turn_head_to_direction(direction: str):
         'left': -45,
         'right': 45,
         'forward': 0,
-        'back': random.choice([-135, 135])  # Look over shoulder
+        'back': 0  # When backing up, look forward (where we came from)
     }
     angle = angle_map.get(direction, 0)
     px.set_cam_pan_angle(angle)
@@ -226,9 +226,9 @@ def turn_and_move(direction: str):
         px.stop()
         time.sleep(0.1)
 
-    # Reset head to center after movement
-    px.set_cam_pan_angle(0)
-    time.sleep(0.1)
+    # DON'T reset head to center - keep looking where we went
+    # Head stays in direction = curious creature effect
+    # Head only resets during look_around() or reset_head()
 
 def escape_corner(vision_clear_direction=None):
     """
@@ -426,7 +426,9 @@ def explore(
             time.sleep(pause_duration)
 
             # === SPEAK OCCASIONALLY (variable timing) ===
-            if on_thought_callback and (now - last_speak_time > next_speak_interval):
+            # Use fresh time after pause
+            speak_check_time = time.time()
+            if on_thought_callback and (speak_check_time - last_speak_time > next_speak_interval):
                 print("[EXPLORE] === TIME TO SPEAK ===")
                 stop()
                 look_at_something()
@@ -441,7 +443,7 @@ def explore(
                         on_thought_callback(description)
 
                 reset_head()
-                last_speak_time = now
+                last_speak_time = speak_check_time
                 next_speak_interval = random.uniform(SPEAK_INTERVAL_MIN, SPEAK_INTERVAL_MAX)
                 print(f"[EXPLORE] Next speak in {next_speak_interval:.1f}s")
 
