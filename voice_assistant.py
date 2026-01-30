@@ -1684,32 +1684,28 @@ def reset_car_safe():
         pass
 
 
-def exploration_thought_callback(novelty: float) -> str:
+def exploration_thought_callback(description: str) -> str:
     """
-    Called during exploration when robot might think out loud.
-    Returns what to say (or None to stay quiet).
+    Called during exploration when robot sees something interesting.
+    description: What the vision API saw
+    Returns what was spoken (or None).
     """
-    global client, SYSTEM_PROMPT
+    global client
 
-    # Only speak if novelty is high
-    if novelty < 0.5:
+    if not description:
         return None
 
-    # Capture and describe scene
-    frame = capture_frame()
-    description = describe_scene(frame)
+    print(f"[EXPLORE] Generating thought for: {description}")
 
-    # Ask LLM for a thought (non-streaming, short response)
-    system_event = f"[SYSTEM: Du utforskar. Du ser: {description}. Tänk högt eller fortsätt utforska.]"
-
+    # Ask LLM for a curious thought about what we see
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": get_full_system_prompt()},
-                {"role": "user", "content": system_event}
+                {"role": "user", "content": f"[SYSTEM: Du utforskar rummet. Du ser: {description}. Säg något kort och nyfiket om det du ser. Max 15 ord.]"}
             ],
-            max_tokens=100
+            max_tokens=60
         )
 
         full_response = response.choices[0].message.content
@@ -1728,11 +1724,12 @@ def exploration_thought_callback(novelty: float) -> str:
 
         # Speak if there's a message
         if message and message.strip():
+            print(f"[EXPLORE] Speaking: {message}")
             speak(message)
             return message
 
     except Exception as e:
-        print(f"Exploration thought error: {e}")
+        print(f"[EXPLORE] Thought error: {e}")
 
     return None
 

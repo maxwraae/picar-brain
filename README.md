@@ -6,6 +6,7 @@ Voice-controlled robot car for Leon (9 years old). Swedish language, wake word a
 
 | Item | Value |
 |------|-------|
+| Hardware | Raspberry Pi 5 + PiCar-X chassis |
 | Pi hostname | `picar.lan` (NOT picar.local) |
 | Pi user | `pi` |
 | Pi password | `Leon` |
@@ -66,7 +67,7 @@ Transcription
 
 Processing
     → *thinking* sound + LED fast blink
-    → GPT-4o-mini streaming (Swedish robot personality)
+    → GPT-5 mini streaming (Swedish robot personality)
     → LED slow pulse when speaking
 
 Speech
@@ -219,7 +220,7 @@ Swedish robot car named PiCar. Playful, energetic, loves making Leon happy. Says
 
 Per conversation (~10 exchanges):
 - Whisper: ~$0.006 (1 min audio)
-- GPT-4o-mini: ~$0.01
+- GPT-5 mini: ~$0.01
 - TTS: ~$0.015 (1000 chars)
 - **Total: ~$0.03/conversation**
 
