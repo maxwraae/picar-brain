@@ -18,17 +18,19 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-CREEP_SPEED = 8          # Very slow creeping
-BACKUP_SPEED = 8         # Slow backup
-SAFE_DISTANCE = 35       # cm - comfortable distance
-DANGER_DISTANCE = 20     # cm - too close
+# Motor minimum is ~15 (below that motors don't move due to static friction)
+# We achieve "slow" feeling through short bursts + long pauses, not low PWM
+CREEP_SPEED = 15         # Minimum working speed for motors
+BACKUP_SPEED = 15        # Same for backup
+SAFE_DISTANCE = 40       # cm - comfortable distance
+DANGER_DISTANCE = 25     # cm - too close, back up
 CORNER_THRESHOLD = 3     # Consecutive backups before "stuck"
 
-# Timing
-CREEP_DURATION = 0.8     # Seconds to creep forward
-PAUSE_DURATION = 0.5     # Pause between movements
-LOOK_INTERVAL = 15       # Seconds between looking around
-SPEAK_INTERVAL = 45      # Seconds between saying something
+# Timing - this is how we make it feel slow and deliberate
+CREEP_DURATION = 0.4     # Short forward bursts (less distance per move)
+PAUSE_DURATION = 1.5     # Long pauses between movements (feels thoughtful)
+LOOK_INTERVAL = 12       # Seconds between looking around
+SPEAK_INTERVAL = 30      # Seconds between saying something
 
 MAX_EXPLORE_DURATION = 3600  # 1 hour max
 DEBUG = True
@@ -161,50 +163,65 @@ def stop():
     px.stop()
 
 def creep_forward():
-    """Creep forward slowly for a short burst."""
+    """Creep forward slowly for a short burst, then stop completely."""
+    px.stop()  # Always start from stopped state
     px.set_dir_servo_angle(0)
     px.forward(CREEP_SPEED)
     time.sleep(CREEP_DURATION)
     px.stop()
+    time.sleep(0.1)  # Let motors fully stop
 
 def backup_and_turn(direction=None):
     """Back up and turn. Direction: -1=left, 1=right, None=random."""
+    px.stop()  # Start from stopped
+
     if direction is None:
         direction = random.choice([-1, 1])
 
     # Back up straight first
     px.set_dir_servo_angle(0)
     px.backward(BACKUP_SPEED)
-    time.sleep(0.6)
+    time.sleep(0.5)
+    px.stop()
+    time.sleep(0.2)
 
     # Turn while backing
     angle = random.randint(35, 55) * direction
     px.set_dir_servo_angle(angle)
     px.backward(BACKUP_SPEED)
-    time.sleep(0.6)
+    time.sleep(0.5)
 
-    # Reset
-    px.set_dir_servo_angle(0)
+    # Reset and stop completely
     px.stop()
+    px.set_dir_servo_angle(0)
+    time.sleep(0.1)
 
 def escape_corner():
-    """Bigger maneuver to escape a corner."""
+    """Bigger maneuver to escape a corner - deliberate, not frantic."""
     print("[EXPLORE] Stuck! Escaping corner...")
+    px.stop()
 
-    # Back up a lot
+    # Back up a lot in stages (feels more deliberate)
     px.set_dir_servo_angle(0)
     px.backward(BACKUP_SPEED)
-    time.sleep(1.2)
+    time.sleep(0.6)
+    px.stop()
+    time.sleep(0.3)
+    px.backward(BACKUP_SPEED)
+    time.sleep(0.6)
+    px.stop()
+    time.sleep(0.3)
 
     # Big turn
     angle = random.randint(50, 70) * random.choice([-1, 1])
     px.set_dir_servo_angle(angle)
     px.backward(BACKUP_SPEED)
-    time.sleep(1.0)
+    time.sleep(0.6)
 
-    # Reset
-    px.set_dir_servo_angle(0)
+    # Reset and stop completely
     px.stop()
+    px.set_dir_servo_angle(0)
+    time.sleep(0.2)
 
 def look_around():
     """Pan camera around curiously."""
@@ -294,12 +311,14 @@ def explore(
             elif distance < SAFE_DISTANCE:
                 # Getting close - turn slightly
                 print(f"[EXPLORE] Close ({distance:.0f}cm) - turning")
+                px.stop()
                 angle = random.randint(15, 30) * random.choice([-1, 1])
                 px.set_dir_servo_angle(angle)
                 px.forward(CREEP_SPEED)
-                time.sleep(0.5)
-                px.set_dir_servo_angle(0)
+                time.sleep(0.3)
                 px.stop()
+                px.set_dir_servo_angle(0)
+                time.sleep(0.1)
                 consecutive_backups = 0
 
             else:
@@ -332,18 +351,20 @@ def explore(
                             consecutive_backups = 0
                         elif analysis["action"] == "left":
                             print("[EXPLORE] Vision suggests left")
+                            px.stop()
                             px.set_dir_servo_angle(-30)
                             px.forward(CREEP_SPEED)
-                            time.sleep(0.8)
-                            px.set_dir_servo_angle(0)
+                            time.sleep(0.4)
                             px.stop()
+                            px.set_dir_servo_angle(0)
                         elif analysis["action"] == "right":
                             print("[EXPLORE] Vision suggests right")
+                            px.stop()
                             px.set_dir_servo_angle(30)
                             px.forward(CREEP_SPEED)
-                            time.sleep(0.8)
-                            px.set_dir_servo_angle(0)
+                            time.sleep(0.4)
                             px.stop()
+                            px.set_dir_servo_angle(0)
                         elif analysis["action"] == "back":
                             print("[EXPLORE] Vision suggests back")
                             backup_and_turn()
