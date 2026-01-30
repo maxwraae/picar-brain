@@ -39,7 +39,12 @@ MANUAL_CONTROL_ENABLED = False  # Set True to re-enable
 def get_distance() -> float:
     """Get ultrasonic distance in cm."""
     try:
-        return px.ultrasonic.read()
+        dist = px.ultrasonic.read()
+        # Sensor returns negative or very small values when failing
+        # Minimum reliable reading is ~2cm
+        if dist < 2:
+            return 100  # Assume safe if sensor fails
+        return dist
     except:
         return 100  # Assume safe if sensor fails
 
