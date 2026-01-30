@@ -1,6 +1,6 @@
 """
 Jarvis Exploration Module
-Curious, deliberate wandering - like a cautious creature exploring.
+Cute curious exploration - HEAD LEADS, BODY FOLLOWS. Like a curious creature.
 """
 
 import time
@@ -18,21 +18,25 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Motor minimum is ~15 (below that motors don't move due to static friction)
-# We achieve "slow" feeling through short bursts + long pauses, not low PWM
-CREEP_SPEED = 15         # Minimum working speed for motors
-BACKUP_SPEED = 15        # Same for backup
-SAFE_DISTANCE = 40       # cm - comfortable distance
-DANGER_DISTANCE = 25     # cm - too close, back up
-CORNER_THRESHOLD = 3     # Consecutive backups before "stuck"
+# Speed
+MOVE_SPEED = 15                # Minimum that works (below this motors don't move)
 
-# Timing - this is how we make it feel slow and deliberate
-CREEP_DURATION = 0.4     # Short forward bursts (less distance per move)
-PAUSE_DURATION = 1.5     # Long pauses between movements (feels thoughtful)
-LOOK_INTERVAL = 12       # Seconds between looking around
-SPEAK_INTERVAL = 30      # Seconds between saying something
+# Variable timing ranges (makes it feel organic)
+MOVE_DURATION_MIN = 0.3        # seconds
+MOVE_DURATION_MAX = 0.5        # seconds
+PAUSE_MIN = 2.0                # seconds
+PAUSE_MAX = 6.0                # seconds (variable - feels alive)
+LOOK_INTERVAL_MIN = 10         # seconds
+LOOK_INTERVAL_MAX = 20         # seconds
+SPEAK_INTERVAL_MIN = 30        # seconds
+SPEAK_INTERVAL_MAX = 60        # seconds
 
-MAX_EXPLORE_DURATION = 3600  # 1 hour max
+# Safety
+SAFE_DISTANCE = 40             # cm
+DANGER_DISTANCE = 25           # cm
+CORNER_THRESHOLD = 3           # consecutive obstacles before "stuck"
+
+MAX_EXPLORE_DURATION = 3600    # 1 hour max
 DEBUG = True
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -75,7 +79,7 @@ def capture_frame():
 def analyze_scene(frame) -> dict:
     """
     Ask vision API to analyze the scene and suggest action.
-    Returns dict with: description, action, stuck
+    Returns dict with: what_i_see, direction, interesting
     """
     if frame is None:
         return None
@@ -92,20 +96,17 @@ def analyze_scene(frame) -> dict:
                     "content": [
                         {
                             "type": "text",
-                            "text": """Du är en liten robot som utforskar ett rum. Analysera bilden och svara i detta format:
+                            "text": """Du är Jarvis, en liten nyfiken robot som utforskar. Beskriv kort vad du ser.
 
-BESKRIVNING: [Vad ser du? Max 10 ord på svenska]
-SITUATION: [open/corner/blocked/wall]
-FÖRSLAG: [forward/left/right/back]
+Svara EXAKT i detta format:
+SER: [vad du ser, max 8 ord]
+RIKTNING: [forward/left/right/back]
+INTRESSANT: [ja/nej]
 
 Exempel:
-BESKRIVNING: Jag ser ett bord och några stolar
-SITUATION: open
-FÖRSLAG: forward
-
-BESKRIVNING: Hörn med väggar på två sidor
-SITUATION: corner
-FÖRSLAG: back"""
+SER: Golv, en blå sko, kabel
+RIKTNING: forward
+INTRESSANT: ja"""
                         },
                         {
                             "type": "image_url",
@@ -117,25 +118,24 @@ FÖRSLAG: back"""
                     ]
                 }
             ],
-            max_tokens=80
+            max_tokens=60
         )
 
         text = response.choices[0].message.content
-        result = {"description": None, "situation": "open", "action": "forward"}
+        result = {"what_i_see": None, "direction": "forward", "interesting": False}
 
         # Parse response
         for line in text.split('\n'):
             line = line.strip()
-            if line.startswith('BESKRIVNING:'):
-                result["description"] = line.replace('BESKRIVNING:', '').strip()
-            elif line.startswith('SITUATION:'):
-                sit = line.replace('SITUATION:', '').strip().lower()
-                if sit in ['open', 'corner', 'blocked', 'wall']:
-                    result["situation"] = sit
-            elif line.startswith('FÖRSLAG:'):
-                act = line.replace('FÖRSLAG:', '').strip().lower()
-                if act in ['forward', 'left', 'right', 'back']:
-                    result["action"] = act
+            if line.startswith('SER:'):
+                result["what_i_see"] = line.replace('SER:', '').strip()
+            elif line.startswith('RIKTNING:'):
+                direction = line.replace('RIKTNING:', '').strip().lower()
+                if direction in ['forward', 'left', 'right', 'back']:
+                    result["direction"] = direction
+            elif line.startswith('INTRESSANT:'):
+                interesting = line.replace('INTRESSANT:', '').strip().lower()
+                result["interesting"] = interesting == 'ja'
 
         if DEBUG:
             print(f"[VISION] {result}")
@@ -151,99 +151,151 @@ def describe_scene(frame) -> str:
     """Simple scene description for speaking."""
     result = analyze_scene(frame)
     if result:
-        return result.get("description")
+        return result.get("what_i_see")
     return None
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MOVEMENT
+# MOVEMENT - HEAD LEADS, BODY FOLLOWS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def stop():
     """Stop all movement."""
     px.stop()
-
-def creep_forward():
-    """Creep forward slowly for a short burst, then stop completely."""
-    px.stop()  # Always start from stopped state
-    px.set_dir_servo_angle(0)
-    px.forward(CREEP_SPEED)
-    time.sleep(CREEP_DURATION)
-    px.stop()
     time.sleep(0.1)  # Let motors fully stop
 
-def backup_and_turn(direction=None):
-    """Back up and turn. Direction: -1=left, 1=right, None=random."""
-    px.stop()  # Start from stopped
+def turn_head_to_direction(direction: str):
+    """Turn head toward a direction (anticipation). Returns pan angle used."""
+    angle_map = {
+        'left': -45,
+        'right': 45,
+        'forward': 0,
+        'back': random.choice([-135, 135])  # Look over shoulder
+    }
+    angle = angle_map.get(direction, 0)
+    px.set_cam_pan_angle(angle)
+    return angle
 
-    if direction is None:
-        direction = random.choice([-1, 1])
-
-    # Back up straight first
-    px.set_dir_servo_angle(0)
-    px.backward(BACKUP_SPEED)
-    time.sleep(0.5)
+def move_forward_short():
+    """Short creep forward (variable duration)."""
     px.stop()
-    time.sleep(0.2)
-
-    # Turn while backing
-    angle = random.randint(35, 55) * direction
-    px.set_dir_servo_angle(angle)
-    px.backward(BACKUP_SPEED)
-    time.sleep(0.5)
-
-    # Reset and stop completely
-    px.stop()
+    time.sleep(0.1)
     px.set_dir_servo_angle(0)
+    px.forward(MOVE_SPEED)
+    time.sleep(random.uniform(MOVE_DURATION_MIN, MOVE_DURATION_MAX))
+    px.stop()
     time.sleep(0.1)
 
-def escape_corner():
-    """Bigger maneuver to escape a corner - deliberate, not frantic."""
+def turn_and_move(direction: str):
+    """
+    THE CUTE PART: Turn head first (anticipation), pause, then body follows.
+    Direction: 'left', 'right', 'forward', 'back'
+    """
+    # 1. HEAD LEADS - look toward where we want to go
+    turn_head_to_direction(direction)
+    time.sleep(random.uniform(0.3, 0.5))  # ANTICIPATION PAUSE - "I'm going to go there!"
+
+    # 2. BODY FOLLOWS
+    px.stop()
+    time.sleep(0.1)
+
+    if direction == 'left':
+        angle = random.randint(-35, -25)
+        px.set_dir_servo_angle(angle)
+        px.forward(MOVE_SPEED)
+        time.sleep(random.uniform(MOVE_DURATION_MIN, MOVE_DURATION_MAX))
+        px.stop()
+        time.sleep(0.1)
+        px.set_dir_servo_angle(0)
+
+    elif direction == 'right':
+        angle = random.randint(25, 35)
+        px.set_dir_servo_angle(angle)
+        px.forward(MOVE_SPEED)
+        time.sleep(random.uniform(MOVE_DURATION_MIN, MOVE_DURATION_MAX))
+        px.stop()
+        time.sleep(0.1)
+        px.set_dir_servo_angle(0)
+
+    elif direction == 'forward':
+        move_forward_short()
+
+    elif direction == 'back':
+        px.set_dir_servo_angle(0)
+        px.backward(MOVE_SPEED)
+        time.sleep(random.uniform(0.4, 0.6))
+        px.stop()
+        time.sleep(0.1)
+
+    # Reset head to center after movement
+    px.set_cam_pan_angle(0)
+    time.sleep(0.1)
+
+def escape_corner(vision_clear_direction=None):
+    """
+    Escape when stuck - deliberate, staged, not frantic.
+    If vision suggests a clear direction, use it.
+    """
     print("[EXPLORE] Stuck! Escaping corner...")
     px.stop()
+    time.sleep(0.1)
 
-    # Back up a lot in stages (feels more deliberate)
+    # Determine which way looks clear
+    clear_dir = vision_clear_direction if vision_clear_direction else random.choice(['left', 'right'])
+
+    # Look toward the clear direction first
+    turn_head_to_direction(clear_dir)
+    time.sleep(0.5)
+
+    # Back up in stages (deliberate, thinking through it)
     px.set_dir_servo_angle(0)
-    px.backward(BACKUP_SPEED)
-    time.sleep(0.6)
-    px.stop()
-    time.sleep(0.3)
-    px.backward(BACKUP_SPEED)
-    time.sleep(0.6)
+    px.backward(MOVE_SPEED)
+    time.sleep(0.4)
     px.stop()
     time.sleep(0.3)
 
-    # Big turn
-    angle = random.randint(50, 70) * random.choice([-1, 1])
+    px.backward(MOVE_SPEED)
+    time.sleep(0.4)
+    px.stop()
+    time.sleep(0.3)
+
+    # Turn and back up
+    angle = random.randint(40, 60) * (1 if clear_dir == 'right' else -1)
     px.set_dir_servo_angle(angle)
-    px.backward(BACKUP_SPEED)
-    time.sleep(0.6)
-
-    # Reset and stop completely
+    px.backward(MOVE_SPEED)
+    time.sleep(0.4)
     px.stop()
+    time.sleep(0.1)
+
+    # Reset
     px.set_dir_servo_angle(0)
+    px.set_cam_pan_angle(0)
     time.sleep(0.2)
 
 def look_around():
-    """Pan camera around curiously."""
-    print("[EXPLORE] Looking around...")
-    stop()
+    """Pan camera around curiously - left, center, right."""
+    px.stop()
+    time.sleep(0.1)
 
     # Look left
     px.set_cam_pan_angle(-50)
     time.sleep(0.6)
 
+    # Look center
+    px.set_cam_pan_angle(0)
+    time.sleep(0.4)
+
     # Look right
     px.set_cam_pan_angle(50)
     time.sleep(0.6)
 
-    # Look center
+    # Back to center
     px.set_cam_pan_angle(0)
     time.sleep(0.3)
 
 def look_at_something():
-    """Tilt head curiously."""
+    """Tilt head curiously at something."""
     px.set_cam_tilt_angle(random.randint(-15, 15))
-    px.set_cam_pan_angle(random.randint(-20, 20))
+    px.set_cam_pan_angle(random.randint(-30, 30))
 
 def reset_head():
     """Center the camera."""
@@ -260,135 +312,138 @@ def explore(
     check_wake_word_callback=None
 ) -> str:
     """
-    Curious exploration loop.
+    Cute curious exploration - HEAD LEADS, BODY FOLLOWS.
 
-    Behavior:
-    - Creep forward slowly, pause, repeat
-    - Stop and look around periodically
-    - Take pictures and describe what we see
-    - Detect when stuck in corner and escape
-    - Say something occasionally via callback
+    Flow:
+    1. OBSERVE (every 10-20s variable) - stop, look around, take picture, ask vision
+    2. DECIDE - stuck? interesting? obstacle? vision suggestion?
+    3. ANTICIPATE - turn HEAD toward chosen direction first (THE CUTE PART)
+    4. MOVE - short creep in that direction
+    5. PAUSE - variable 2-6s (feels organic)
+    6. QUICK CHECK - ultrasonic, wake word, timeout
+    7. REPEAT
     """
     start_time = time.time()
-    last_look_time = time.time()
+    last_observation_time = time.time() - 999  # Force first observation
     last_speak_time = time.time()
-    consecutive_backups = 0
+    next_observation_interval = random.uniform(LOOK_INTERVAL_MIN, LOOK_INTERVAL_MAX)
+    next_speak_interval = random.uniform(SPEAK_INTERVAL_MIN, SPEAK_INTERVAL_MAX)
+    consecutive_obstacles = 0
 
-    print("[EXPLORE] Starting curious exploration...")
+    print("[EXPLORE] Starting cute curious exploration...")
+    print("[EXPLORE] HEAD LEADS, BODY FOLLOWS")
 
     try:
         while True:
-            # Check timeout
-            elapsed = time.time() - start_time
+            now = time.time()
+            elapsed = now - start_time
+
+            # === TIMEOUT CHECK ===
             if elapsed >= max_duration:
                 print("[EXPLORE] Timeout")
                 return "timeout"
 
-            # Check wake word
+            # === WAKE WORD CHECK ===
             if check_wake_word_callback and check_wake_word_callback():
                 print("[EXPLORE] Wake word detected!")
                 stop()
                 return "wake_word"
 
-            # Get distance
-            distance = get_distance()
-            if DEBUG:
-                print(f"[EXPLORE] Distance: {distance:.0f}cm")
-
-            # === MOVEMENT DECISION ===
-
-            if distance < DANGER_DISTANCE:
-                # Too close - back up
-                print(f"[EXPLORE] Too close ({distance:.0f}cm) - backing up")
-                backup_and_turn()
-                consecutive_backups += 1
-
-                # Stuck in corner?
-                if consecutive_backups >= CORNER_THRESHOLD:
-                    escape_corner()
-                    consecutive_backups = 0
-
-            elif distance < SAFE_DISTANCE:
-                # Getting close - turn slightly
-                print(f"[EXPLORE] Close ({distance:.0f}cm) - turning")
-                px.stop()
-                angle = random.randint(15, 30) * random.choice([-1, 1])
-                px.set_dir_servo_angle(angle)
-                px.forward(CREEP_SPEED)
-                time.sleep(0.3)
-                px.stop()
-                px.set_dir_servo_angle(0)
-                time.sleep(0.1)
-                consecutive_backups = 0
-
-            else:
-                # Safe - creep forward
-                print(f"[EXPLORE] Safe ({distance:.0f}cm) - creeping")
-                creep_forward()
-                consecutive_backups = 0
-
-            # Pause between movements
-            time.sleep(PAUSE_DURATION)
-
-            # === VISION CHECK ===
-
-            now = time.time()
-            if now - last_look_time > LOOK_INTERVAL:
+            # === FULL OBSERVATION (variable timing) ===
+            if now - last_observation_time > next_observation_interval:
+                print("[EXPLORE] === OBSERVE ===")
                 stop()
                 look_around()
 
-                # Take a picture and analyze
+                # Take picture and analyze with vision
                 frame = capture_frame()
+                vision_result = None
+                chosen_direction = 'forward'  # default
+
                 if frame is not None:
-                    analysis = analyze_scene(frame)
-                    if analysis:
-                        print(f"[EXPLORE] Vision says: {analysis}")
+                    vision_result = analyze_scene(frame)
+                    if vision_result:
+                        print(f"[VISION] Ser: {vision_result['what_i_see']}")
+                        print(f"[VISION] Förslag: {vision_result['direction']}, Intressant: {vision_result['interesting']}")
 
-                        # Use vision suggestion for next action
-                        if analysis["situation"] in ["corner", "blocked"]:
-                            print("[EXPLORE] Vision detected corner/blocked - escaping")
-                            escape_corner()
-                            consecutive_backups = 0
-                        elif analysis["action"] == "left":
-                            print("[EXPLORE] Vision suggests left")
-                            px.stop()
-                            px.set_dir_servo_angle(-30)
-                            px.forward(CREEP_SPEED)
-                            time.sleep(0.4)
-                            px.stop()
-                            px.set_dir_servo_angle(0)
-                        elif analysis["action"] == "right":
-                            print("[EXPLORE] Vision suggests right")
-                            px.stop()
-                            px.set_dir_servo_angle(30)
-                            px.forward(CREEP_SPEED)
-                            time.sleep(0.4)
-                            px.stop()
-                            px.set_dir_servo_angle(0)
-                        elif analysis["action"] == "back":
-                            print("[EXPLORE] Vision suggests back")
-                            backup_and_turn()
+                        # Decide based on vision
+                        if consecutive_obstacles >= CORNER_THRESHOLD:
+                            # Stuck - escape with vision help
+                            print("[EXPLORE] === STUCK - ESCAPING ===")
+                            escape_corner(vision_clear_direction=vision_result['direction'])
+                            consecutive_obstacles = 0
+                            chosen_direction = None  # Already moved
 
-                last_look_time = now
+                        elif vision_result['interesting']:
+                            # Something interesting - go toward it
+                            print(f"[EXPLORE] === INTERESTING! Going {vision_result['direction']} ===")
+                            chosen_direction = vision_result['direction']
 
-            # === SAY SOMETHING ===
+                        else:
+                            # Follow vision suggestion
+                            chosen_direction = vision_result['direction']
+                            print(f"[EXPLORE] === Vision suggests: {chosen_direction} ===")
 
-            if on_thought_callback and (now - last_speak_time > SPEAK_INTERVAL):
-                # Stop and look at something
+                # Move if we have a direction
+                if chosen_direction:
+                    turn_and_move(chosen_direction)
+
+                # Reset timers with variable intervals
+                last_observation_time = now
+                next_observation_interval = random.uniform(LOOK_INTERVAL_MIN, LOOK_INTERVAL_MAX)
+                print(f"[EXPLORE] Next observation in {next_observation_interval:.1f}s")
+
+            # === QUICK MOVEMENT (between full observations) ===
+            else:
+                # Quick ultrasonic check
+                distance = get_distance()
+
+                if distance < DANGER_DISTANCE:
+                    # Too close - turn away
+                    print(f"[EXPLORE] Obstacle at {distance:.0f}cm - turning away")
+                    turn_direction = random.choice(['left', 'right'])
+                    turn_and_move(turn_direction)
+                    consecutive_obstacles += 1
+
+                elif distance < SAFE_DISTANCE:
+                    # Getting close - slight turn
+                    print(f"[EXPLORE] Close at {distance:.0f}cm - slight turn")
+                    turn_direction = random.choice(['left', 'right'])
+                    turn_and_move(turn_direction)
+                    consecutive_obstacles = 0
+
+                else:
+                    # Safe - creep forward
+                    if DEBUG:
+                        print(f"[EXPLORE] Safe at {distance:.0f}cm - creeping forward")
+                    turn_and_move('forward')
+                    consecutive_obstacles = 0
+
+            # === PAUSE (variable - feels organic) ===
+            pause_duration = random.uniform(PAUSE_MIN, PAUSE_MAX)
+            if DEBUG:
+                print(f"[EXPLORE] Pausing {pause_duration:.1f}s...")
+            time.sleep(pause_duration)
+
+            # === SPEAK OCCASIONALLY (variable timing) ===
+            if on_thought_callback and (now - last_speak_time > next_speak_interval):
+                print("[EXPLORE] === TIME TO SPEAK ===")
                 stop()
                 look_at_something()
-                time.sleep(0.3)
+                time.sleep(0.4)
 
                 # Take picture and describe
                 frame = capture_frame()
                 if frame is not None:
                     description = describe_scene(frame)
                     if description:
-                        print(f"[EXPLORE] Saying: {description}")
+                        print(f"[EXPLORE] Speaking: {description}")
                         on_thought_callback(description)
 
                 reset_head()
                 last_speak_time = now
+                next_speak_interval = random.uniform(SPEAK_INTERVAL_MIN, SPEAK_INTERVAL_MAX)
+                print(f"[EXPLORE] Next speak in {next_speak_interval:.1f}s")
 
     finally:
         stop()
