@@ -26,9 +26,10 @@ THOUGHT_INTERVAL_MIN = 30   # seconds between thoughts
 THOUGHT_INTERVAL_MAX = 60
 MAX_EXPLORE_DURATION = 3600  # 1 hour max
 
-# Manual control detection
-MANUAL_CONTROL_CLOSE = 5    # cm - too close, likely picked up
-MANUAL_CONTROL_JUMP = 50    # cm - sudden distance jump
+# Manual control detection - DISABLED (sensor too noisy)
+# MANUAL_CONTROL_CLOSE = 5    # cm - too close, likely picked up
+# MANUAL_CONTROL_JUMP = 50    # cm - sudden distance jump
+MANUAL_CONTROL_ENABLED = False  # Set True to re-enable
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SENSORS
@@ -262,19 +263,13 @@ def explore(
             # Get distance
             distance = get_distance()
 
-            # MANUAL CONTROL DETECTION: Check for sudden distance changes
-            if previous_distance is not None:
-                distance_change = abs(distance - previous_distance)
-
-                # Picked up (very close) or sudden large jump
-                if distance < MANUAL_CONTROL_CLOSE or distance_change > MANUAL_CONTROL_JUMP:
-                    print(f"Manual control detected! Distance: {distance}cm, Change: {distance_change}cm")
-                    stop_moving()
-
-                    # Just print, let main loop handle speech
-                    print("Manual control: Robot picked up or pushed")
-
-                    return "manual_control"
+            # MANUAL CONTROL DETECTION: Disabled due to sensor noise
+            # if MANUAL_CONTROL_ENABLED and previous_distance is not None:
+            #     distance_change = abs(distance - previous_distance)
+            #     if distance < 5 or distance_change > 50:
+            #         print(f"Manual control detected! Distance: {distance}cm")
+            #         stop_moving()
+            #         return "manual_control"
 
             previous_distance = distance
 
