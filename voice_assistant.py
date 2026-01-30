@@ -436,6 +436,7 @@ def handle_manual_control():
 
     previous_mode = current_mode
     current_mode = "manual_control"
+    print(f"[STATE] Manual control mode activated (previous: {previous_mode})")
 
     # Inform Jarvis
     speak_system_event("[SYSTEM: Leon har tagit över kontrollerna. Du kan prata och röra huvudet men inte köra.]")
@@ -461,6 +462,7 @@ def handle_manual_control():
 
     # Manual control ended
     current_mode = previous_mode
+    print(f"[STATE] Manual control ended, returning to {previous_mode}")
     speak_system_event("[SYSTEM: Leon släppte kontrollerna. Du kan röra dig själv igen.]")
 
 # ============== TABLE MODE SAFETY ==============
@@ -468,6 +470,7 @@ def handle_manual_control():
 def enter_table_mode():
     """Enter safe mode - head movements only."""
     global current_mode
+    print(f"[STATE] Entering table mode (edge detected)")
     current_mode = "table_mode"
 
     # Stop any movement
@@ -482,6 +485,7 @@ def enter_table_mode():
 def exit_table_mode():
     """Exit table mode, return to listening."""
     global current_mode
+    print(f"[STATE] Exiting table mode, returning to listening")
     current_mode = "listening"
     speak_system_event("[SYSTEM: Du är på golvet igen. Normal rörelse återställd.]")
 
@@ -1132,9 +1136,11 @@ def chat_with_gpt(user_message):
     Speaks each sentence as it completes for real-time response.
     Returns: (full_answer_text, actions_list)
     """
+    print(f"[CHAT] User: {user_message}")
     for attempt in range(MAX_RETRIES):
         try:
             if attempt > 0:
+                print(f"[CHAT] Retry attempt {attempt + 1}/{MAX_RETRIES}")
                 time.sleep(1)  # Brief pause before retry
 
             # Add user message to history (only on first attempt)
@@ -1143,6 +1149,7 @@ def chat_with_gpt(user_message):
                     "role": "user",
                     "content": user_message
                 })
+                print(f"[CHAT] Added message to history (length: {len(conversation_history)})")
 
             # Call OpenAI with streaming
             response = client.chat.completions.create(
@@ -1209,12 +1216,13 @@ def chat_with_gpt(user_message):
 
             # Parse actions and memory from full response
             actions, answer_text, memory = parse_response(full_response)
+            print(f"[CHAT] Parsed response: actions={actions}, has_memory={memory is not None}")
 
             # Store memory if present
             if memory:
                 entity, observation = memory
                 add_observation(entity, observation)
-                print(f"💾 Memory: {entity} - {observation}")
+                print(f"[CHAT] Memory stored: {entity} - {observation}")
 
             # Add assistant response to history
             conversation_history.append({
@@ -1224,16 +1232,19 @@ def chat_with_gpt(user_message):
 
             # Keep conversation history reasonable (last 10 messages)
             if len(conversation_history) > 21:  # system + 10 pairs
+                pruned = len(conversation_history) - 21
                 conversation_history[:] = [conversation_history[0]] + conversation_history[-20:]
+                print(f"[CHAT] Pruned {pruned} old messages from history")
 
             return answer_text, actions
 
         except Exception as e:
-            print(f"🔄 GPT-fel (försök {attempt + 1}/{MAX_RETRIES}): {e}")
+            print(f"[CHAT] GPT error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
             if attempt == MAX_RETRIES - 1:
                 # Remove the user message we added if all retries failed
                 if conversation_history and conversation_history[-1]["role"] == "user":
                     conversation_history.pop()
+                    print(f"[CHAT] Removed failed user message from history")
                 return "Jag kan inte tänka just nu, försök igen!", []
 
     return "Jag kan inte tänka just nu, försök igen!", []
@@ -1603,13 +1614,16 @@ def is_valid_speech(text):
 
     # Check against known noise transcriptions
     if cleaned.lower() in {n.lower() for n in NOISE_TRANSCRIPTIONS}:
+        print(f"[CHAT] Filtered noise pattern: '{cleaned}'")
         return False, "noise_pattern"
 
     # Check word count (short utterances are often noise)
     words = cleaned.split()
     if len(words) < MIN_WORDS_FOR_VALID_SPEECH:
+        print(f"[CHAT] Too short: '{cleaned}' ({len(words)} words)")
         return False, f"too_short ({len(words)} words)"
 
+    print(f"[CHAT] Valid speech: '{cleaned}' ({len(words)} words)")
     return True, "valid"
 
 
@@ -1617,9 +1631,11 @@ def transcribe_audio(wav_file):
     """
     Transcribe audio file using OpenAI Whisper API with retry logic
     """
+    print(f"[CHAT] Transcribing audio from {wav_file}")
     for attempt in range(MAX_RETRIES):
         try:
             if attempt > 0:
+                print(f"[CHAT] Transcription retry {attempt + 1}/{MAX_RETRIES}")
                 time.sleep(1)  # Brief pause before retry
 
             with open(wav_file, "rb") as f:
@@ -1630,10 +1646,12 @@ def transcribe_audio(wav_file):
                 )
 
             if transcript and transcript.text:
-                return transcript.text.strip()
+                result = transcript.text.strip()
+                print(f"[CHAT] Transcribed: '{result}'")
+                return result
 
         except Exception as e:
-            print(f"🔄 Whisper-fel (försök {attempt + 1}/{MAX_RETRIES}): {e}")
+            print(f"[CHAT] Whisper error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
             if attempt == MAX_RETRIES - 1:
                 return None
 
@@ -1773,7 +1791,7 @@ def listen_for_wake_word(timeout=None):
     if porcupine is None:
         return True  # Fallback to push-to-talk
 
-    print("👂 Lyssnar efter 'Jarvis'...")
+    print(f"[CHAT] Listening for wake word (timeout: {timeout}s)" if timeout else "[CHAT] Listening for wake word")
 
     try:
         with WakeWordListener(porcupine) as listener:
@@ -1791,7 +1809,7 @@ def listen_for_wake_word(timeout=None):
                 result = porcupine.process(pcm)
 
                 if result >= 0:
-                    print("✨ Jarvis!")
+                    print(f"[CHAT] Wake word detected!")
                     # Play ding sound immediately for feedback
                     try:
                         music.sound_play_threading(SOUND_DING)
@@ -1960,9 +1978,9 @@ def main():
 
                 # Check for exploration mode after timeout
                 time_since_conversation = time.time() - last_conversation_time
-                print(f"🕐 Time since conversation: {time_since_conversation:.1f}s (timeout: {CONVERSATION_TIMEOUT}s)")
+                print(f"[STATE] Time since conversation: {time_since_conversation:.1f}s (timeout: {CONVERSATION_TIMEOUT}s)")
                 if time_since_conversation > CONVERSATION_TIMEOUT and current_mode != "table_mode":
-                    print("🚗 Entering exploration mode")
+                    print(f"[STATE] Entering exploration mode")
                     current_mode = "exploring"
 
                     # Create wake word check callback using porcupine
@@ -1991,15 +2009,18 @@ def main():
                     )
 
                     if result == "wake_word":
+                        print(f"[STATE] Wake word detected during exploration")
                         current_mode = "listening"
                         last_conversation_time = time.time()
                         skip_wake_word = True  # Skip wake word detection, go straight to recording
                         continue
                     elif result == "table_mode":
+                        print(f"[STATE] Table mode detected during exploration")
                         current_mode = "table_mode"
                         speak("Ojdå. Jag står visst på ett bord. Ingen körning nu.")
                         continue
                     elif result == "manual_control":
+                        print(f"[STATE] Manual control detected during exploration")
                         current_mode = "listening"
                         speak("Hoppla! Någon lyfte mig!")
                         continue
@@ -2097,6 +2118,7 @@ def main():
             # Update conversation tracking
             last_conversation_time = time.time()
             current_mode = "conversation"
+            print(f"[STATE] Conversation mode active")
 
             # Get GPT response (streaming - speaks sentence-by-sentence)
             print("💭 Tänker...")
@@ -2104,6 +2126,7 @@ def main():
 
             # Check if user interrupted with "Jarvis"
             if answer == "interrupted":
+                print(f"[CHAT] User interrupted with wake word")
                 # Skip wake word detection and go straight to recording
                 skip_wake_word = True
                 continue  # Loop back to recording immediately
@@ -2113,12 +2136,12 @@ def main():
 
             # Note: Speaking already happened during streaming
             if actions:
-                print(f"🎬 Rörelser: {actions}")
+                print(f"[CHAT] Executing actions: {actions}")
 
             # Execute actions (using execute_action from actions.py)
             for action_name in actions:
                 if action_name in ACTIONS:
-                    print(f"⚡ Utför: {action_name}")
+                    print(f"[CHAT] Executing action: {action_name}")
                     execute_action(action_name, table_mode=(current_mode == "table_mode"))
                     time.sleep(0.3)
 
