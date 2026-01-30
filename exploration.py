@@ -20,8 +20,8 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 SAFE_DISTANCE = 30      # cm - safe to move forward (was 40)
 DANGER_DISTANCE = 15    # cm - must turn or back up (was 20)
-EXPLORE_SPEED = 20      # slower exploration (was 25)
-BACKUP_SPEED = 20       # slower backup (was 30)
+EXPLORE_SPEED = 12      # gentle exploration speed
+BACKUP_SPEED = 12       # gentle backup speed
 DEBUG_DISTANCE = True   # Print distance readings
 THOUGHT_INTERVAL_MIN = 30   # seconds between thoughts
 THOUGHT_INTERVAL_MAX = 60
