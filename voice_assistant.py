@@ -1951,8 +1951,9 @@ def main():
 
                 # Check for exploration mode after timeout
                 time_since_conversation = time.time() - last_conversation_time
+                print(f"🕐 Time since conversation: {time_since_conversation:.1f}s (timeout: {CONVERSATION_TIMEOUT}s)")
                 if time_since_conversation > CONVERSATION_TIMEOUT and current_mode != "table_mode":
-                    print("Entering exploration mode")
+                    print("🚗 Entering exploration mode")
                     current_mode = "exploring"
 
                     # Create wake word check callback using porcupine
@@ -2006,9 +2007,11 @@ def main():
                     # (already printed "Fortsätter lyssna...")
                 elif porcupine:
                     # Normal wake word mode - timeout allows exploration check
+                    print(f"⏳ Waiting for wake word (timeout: {CONVERSATION_TIMEOUT}s)...")
                     detected = listen_for_wake_word(timeout=CONVERSATION_TIMEOUT)
                     if not detected:
                         # Timeout is normal - just loop back to check exploration
+                        print("⏰ Wake word timeout - checking exploration")
                         continue
                     # Reset failure counter on successful detection
                     consecutive_failures = 0
