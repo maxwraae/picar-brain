@@ -17,12 +17,17 @@ MAX_OBSERVATIONS_IN_CONTEXT = 15
 def load_memory() -> dict:
     """Load memory from file."""
     if not os.path.exists(MEMORY_FILE):
+        print(f"[MEMORY] No memory file found, starting fresh")
         return {"entities": {}}
     try:
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            entity_count = len(data.get("entities", {}))
+            total_obs = sum(len(e.get("observations", [])) for e in data.get("entities", {}).values())
+            print(f"[MEMORY] Loaded {entity_count} entities with {total_obs} total observations")
+            return data
     except Exception as e:
-        print(f"Memory load error: {e}")
+        print(f"[MEMORY] Load error: {e}")
         return {"entities": {}}
 
 def save_memory_file(memory: dict):
@@ -32,8 +37,9 @@ def save_memory_file(memory: dict):
         with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
             json.dump(memory, f, ensure_ascii=False, indent=2)
         shutil.move(temp_path, MEMORY_FILE)
+        print(f"[MEMORY] Saved to {MEMORY_FILE}")
     except Exception as e:
-        print(f"Memory save error: {e}")
+        print(f"[MEMORY] Save error: {e}")
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
@@ -100,25 +106,30 @@ def parse_memory_line(line: str) -> tuple[str, str] | None:
 def add_observation(entity: str, observation: str):
     """Add observation to entity."""
     if not observation or not observation.strip():
+        print(f"[MEMORY] Skipping empty observation")
         return
 
     memory = load_memory()
 
     if entity not in memory["entities"]:
+        print(f"[MEMORY] Creating new entity: {entity}")
         memory["entities"][entity] = {"observations": []}
 
+    timestamp = datetime.now().isoformat()
     memory["entities"][entity]["observations"].append({
         "content": observation.strip(),
-        "timestamp": datetime.now().isoformat()
+        "timestamp": timestamp
     })
 
     # Prune if too many
     obs = memory["entities"][entity]["observations"]
     if len(obs) > MAX_OBSERVATIONS_PER_ENTITY:
+        pruned_count = len(obs) - MAX_OBSERVATIONS_PER_ENTITY
         memory["entities"][entity]["observations"] = obs[-MAX_OBSERVATIONS_PER_ENTITY:]
+        print(f"[MEMORY] Pruned {pruned_count} old observations from {entity}")
 
     save_memory_file(memory)
-    print(f"Memory saved: [{entity}] {observation}")
+    print(f"[MEMORY] Added: [{entity}] {observation}")
 
 def format_memories_for_prompt() -> str:
     """Format memories for system prompt injection."""
@@ -126,6 +137,7 @@ def format_memories_for_prompt() -> str:
     entities = memory.get("entities", {})
 
     if not entities:
+        print(f"[MEMORY] No memories to format for prompt")
         return ""
 
     sections = []
@@ -156,8 +168,10 @@ def format_memories_for_prompt() -> str:
                 break
 
         sections.append("\n".join(lines))
+        print(f"[MEMORY] Formatted {len(recent)} observations for {entity}")
 
         if total >= MAX_OBSERVATIONS_IN_CONTEXT:
             break
 
+    print(f"[MEMORY] Total {total} observations included in prompt")
     return "\n\n".join(sections)
