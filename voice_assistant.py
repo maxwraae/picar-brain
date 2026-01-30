@@ -1927,6 +1927,8 @@ def main():
         print(f"Säg 'Jarvis' för att prata, Ctrl+C för att avsluta")
         # allow_interrupt=False prevents robot from hearing itself say "Jarvis"
         speak(f"Hej Leon! Jag är din robotbil. Säg Jarvis så lyssnar jag!", allow_interrupt=False)
+        # Wait for echo to die out before listening for wake word
+        time.sleep(1.5)
     else:
         print("Tryck ENTER för att prata, Ctrl+C för att avsluta")
         speak("Hej Leon! Jag är din robotbil. Tryck på knappen och prata med mig!")
