@@ -841,11 +841,11 @@ conversation_history.append({"role": "system", "content": get_full_system_prompt
 
 # ============== TTS FUNCTIONS ==============
 
-def speak_openai(text):
+def speak_openai(text, allow_interrupt=True):
     """
     Speak using OpenAI TTS with streaming.
     Streams audio chunks directly to aplay for low latency.
-    Can be interrupted by saying "Jarvis".
+    Can be interrupted by saying "Jarvis" (if allow_interrupt=True).
     Returns: True (completed), False (error), "interrupted" (wake word detected)
     """
     global current_speech_proc
@@ -856,7 +856,8 @@ def speak_openai(text):
                 time.sleep(AUDIO_DEVICE_RETRY_DELAY)
 
             # Start interrupt listener (listens for "Jarvis" during speech)
-            start_interrupt_listener()
+            if allow_interrupt:
+                start_interrupt_listener()
 
             # Use streaming response from OpenAI TTS
             with client.audio.speech.with_streaming_response.create(
@@ -879,7 +880,7 @@ def speak_openai(text):
                 try:
                     for chunk in response.iter_bytes(chunk_size=4096):
                         # Check if interrupted by wake word
-                        if speech_interrupted.is_set():
+                        if allow_interrupt and speech_interrupted.is_set():
                             proc.terminate()
                             stop_interrupt_listener()
                             return "interrupted"
@@ -895,10 +896,11 @@ def speak_openai(text):
                     proc.stdin.close()
                     proc.wait(timeout=10)
                     current_speech_proc = None
-                    stop_interrupt_listener()
+                    if allow_interrupt:
+                        stop_interrupt_listener()
 
                     # Check one more time if interrupted
-                    if speech_interrupted.is_set():
+                    if allow_interrupt and speech_interrupted.is_set():
                         return "interrupted"
 
                     if proc.returncode == 0:
@@ -915,9 +917,10 @@ def speak_openai(text):
 
                 except BrokenPipeError:
                     current_speech_proc = None
-                    stop_interrupt_listener()
-                    if speech_interrupted.is_set():
-                        return "interrupted"
+                    if allow_interrupt:
+                        stop_interrupt_listener()
+                        if speech_interrupted.is_set():
+                            return "interrupted"
                     if attempt < MAX_RETRIES - 1:
                         continue
                     print("❌ Ljuduppspelning avbröts")
@@ -1019,13 +1022,16 @@ def speak_piper(text):
     return False
 
 
-def speak(text):
+def speak(text, allow_interrupt=True):
     """
     Main speak function - uses OpenAI TTS by default, falls back to Piper.
     Returns: True (completed), False (error), "interrupted" (wake word detected)
+
+    allow_interrupt: If False, disables wake word detection during speech
+                    (use for startup messages that contain "Jarvis")
     """
     if USE_OPENAI_TTS:
-        result = speak_openai(text)
+        result = speak_openai(text, allow_interrupt=allow_interrupt)
         if result == "interrupted":
             return "interrupted"
         if result:
@@ -1919,7 +1925,8 @@ def main():
 
     if porcupine:
         print(f"Säg 'Jarvis' för att prata, Ctrl+C för att avsluta")
-        speak(f"Hej Leon! Jag är din robotbil. Säg Jarvis så lyssnar jag!")
+        # allow_interrupt=False prevents robot from hearing itself say "Jarvis"
+        speak(f"Hej Leon! Jag är din robotbil. Säg Jarvis så lyssnar jag!", allow_interrupt=False)
     else:
         print("Tryck ENTER för att prata, Ctrl+C för att avsluta")
         speak("Hej Leon! Jag är din robotbil. Tryck på knappen och prata med mig!")
