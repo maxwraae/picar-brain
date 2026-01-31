@@ -145,7 +145,7 @@ SOUND_LISTENING = f"{SOUNDS_DIR}/listening.wav"  # Your turn / ready to listen (
 # Wake word configuration (Picovoice)
 # Get free access key from https://console.picovoice.ai
 PICOVOICE_ACCESS_KEY = ""  # Set in keys.py or here
-WAKE_WORD = "jarvis"  # Built-in: alexa, americano, blueberry, bumblebee, computer, grapefruit, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
+WAKE_WORD = "computer"  # Built-in: alexa, americano, blueberry, bumblebee, computer, grapefruit, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
 
 # ============== CONFIG ==============
 
