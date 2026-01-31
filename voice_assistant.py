@@ -72,7 +72,9 @@ import random
 from keys import OPENAI_API_KEY
 from memory import add_observation, format_memories_for_prompt
 from exploration import explore, describe_scene, capture_frame
-from actions import px, ALL_ACTIONS as ACTIONS, execute_action, execute_actions
+# Socket-based control - no direct GPIO access
+import socket
+import json
 
 # ============== SIGNAL HANDLING ==============
 
@@ -95,11 +97,14 @@ import webrtcvad
 import wave
 import struct
 
-# PiCar imports
-from picarx import Picarx
-from robot_hat import Music, Pin
-from sunfounder_controller import SunFounderController
-from vilib import Vilib
+# PiCar imports - Socket mode (no direct GPIO)
+# from picarx import Picarx - REMOVED (socket control)
+from robot_hat import Pin  # Keep for button/LED only
+# from sunfounder_controller import SunFounderController - REMOVED
+# from vilib import Vilib - REMOVED (camera handled by app_control)
+
+# Controller is None - app_control.py handles SunFounder app now
+controller = None
 
 # ============== CONSTANTS ==============
 
@@ -478,41 +483,64 @@ APP_MODE_TIMEOUT = 60  # seconds of no input to exit app mode
 last_app_input_time = 0
 app_speed = 0
 
-# Initialize controller for phone app (SunFounder app)
-try:
-    controller = SunFounderController()
-    controller.set_name("Picarx-Leon")
-    controller.set_type("Picarx")
-    # Tell the app where to find video stream
-    controller.set("video", "http://192.168.1.101:9000/mjpg")
-    controller.start()
-    print("✓ SunFounder app ready (port 8765)")
-except Exception as e:
-    print(f"⚠️ SunFounder controller failed: {e}")
-    controller = None
+# REMOVED: SunFounderController init (handled by app_control.py)
+# REMOVED: Vilib camera init (handled by app_control.py)
+# Voice service now uses socket commands only
+print("✓ Voice assistant in socket mode")
 
-# Pre-initialize vilib camera with streaming enabled (app needs this from start)
-try:
-    print("[DEBUG] Starting camera...", flush=True)
-    Vilib.camera_start(vflip=False, hflip=False)
-    print("[DEBUG] Camera started, starting display...", flush=True)
-    Vilib.display(local=False, web=True)
-    print("[DEBUG] Display started, sleeping 2s...", flush=True)
-    import sys
-    sys.stdout.flush()
-    time.sleep(2)
-    print("[DEBUG] Sleep done!", flush=True)
-    sys.stdout.flush()
-    print("✓ Camera streaming on port 9000", flush=True)
-    sys.stdout.flush()
-    print("✓ Video streaming on port 9000", flush=True)
-    sys.stdout.flush()
-except Exception as e:
-    print(f"⚠️ Camera init failed (app video won't work): {e}", flush=True)
+# ============== SOCKET CONTROL ==============
 
-print("[DEBUG] Camera init block done, continuing module load...", flush=True)
-import sys
-sys.stdout.flush()
+def send_robot_command(action, params=None):
+    """Send command to app_control.py via socket"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect(('127.0.0.1', 5555))
+        cmd = json.dumps({'action': action, 'params': params or {}})
+        sock.send(cmd.encode('utf-8'))
+        response = sock.recv(1024).decode()
+        sock.close()
+        return response == 'OK'
+    except Exception as e:
+        log(f"Socket command failed: {e}", "warning")
+        return False
+
+SOCKET_ACTIONS = {
+    'forward': lambda p: send_robot_command('forward', {'speed': p.get('speed', 30)}),
+    'backward': lambda p: send_robot_command('backward', {'speed': p.get('speed', 30)}),
+    'turn_left': lambda p: send_robot_command('turn_left'),
+    'turn_right': lambda p: send_robot_command('turn_right'),
+    'stop': lambda p: send_robot_command('stop'),
+    'look_left': lambda p: send_robot_command('camera_pan', {'angle': -45}),
+    'look_right': lambda p: send_robot_command('camera_pan', {'angle': 45}),
+    'look_up': lambda p: send_robot_command('camera_tilt', {'angle': 20}),
+    'look_down': lambda p: send_robot_command('camera_tilt', {'angle': -20}),
+}
+
+def execute_action(action_name, params=None, table_mode=False):
+    """Execute action via socket to app_control"""
+    if action_name in SOCKET_ACTIONS:
+        success = SOCKET_ACTIONS[action_name](params or {})
+        if success:
+            log(f"Action executed: {action_name}")
+        else:
+            log(f"Action failed: {action_name}", "warning")
+        return success
+    else:
+        log(f"Unknown action: {action_name}", "warning")
+        return False
+
+def execute_actions(action_list):
+    """Execute multiple actions sequentially"""
+    for action in action_list:
+        if isinstance(action, dict):
+            execute_action(action.get('name'), action.get('params'))
+        else:
+            execute_action(action)
+
+# For compatibility with existing code
+ACTIONS = list(SOCKET_ACTIONS.keys())
+ALL_ACTIONS = ACTIONS
 
 last_manual_input_time = 0
 MANUAL_CONTROL_TIMEOUT = 5  # seconds
@@ -520,58 +548,16 @@ MANUAL_CONTROL_TIMEOUT = 5  # seconds
 # ============== MANUAL CONTROL DETECTION ==============
 
 def check_manual_control() -> bool:
-    """Check if manual control is active."""
-    global last_manual_input_time
-
-    if controller is None:
-        return False
-
-    try:
-        joystick = controller.get('K')
-        if joystick and (abs(joystick[0]) > 5 or abs(joystick[1]) > 5):
-            last_manual_input_time = time.time()
-            return True
-    except:
-        pass
-
-    # Check timeout
-    if time.time() - last_manual_input_time < MANUAL_CONTROL_TIMEOUT:
-        return True
-
+    """Check if manual control is active - disabled in socket mode."""
+    # In socket mode, app_control.py handles manual input
+    # Voice assistant is always available
     return False
 
 def handle_manual_control():
-    """Handle manual control mode."""
-    global current_mode
-
-    previous_mode = current_mode
-    current_mode = "manual_control"
-    print(f"[STATE] Manual control mode activated (previous: {previous_mode})")
-
-    # Inform Jarvis
-    speak_system_event("[SYSTEM: Leon har tagit över kontrollerna. Du kan prata och röra huvudet men inte köra.]")
-
-    # Loop while manual control active
-    comment_interval = random.randint(5, 15)
-    last_comment_time = time.time()
-
-    while check_manual_control():
-        # Occasional comment on the ride
-        if time.time() - last_comment_time > comment_interval:
-            joystick = controller.get('K') if controller else [0, 0]
-            speed = abs(joystick[1]) if joystick else 0
-            direction = "framåt" if joystick and joystick[1] > 0 else "bakåt"
-
-            event = f"[SYSTEM: Leon kör dig manuellt. Fart: {speed}. Riktning: {direction}.]"
-            speak_system_event(event)
-
-            last_comment_time = time.time()
-            comment_interval = random.randint(10, 20)
-
-        time.sleep(0.1)
-
-    # Manual control ended
-    current_mode = previous_mode
+    """Handle manual control mode - disabled in socket mode."""
+    # In socket mode, app_control.py handles manual input
+    # Voice assistant doesn't need to monitor or respond
+    pass
     print(f"[STATE] Manual control ended, returning to {previous_mode}")
     speak_system_event("[SYSTEM: Leon släppte kontrollerna. Du kan röra dig själv igen.]")
 
@@ -583,11 +569,8 @@ def enter_table_mode():
     print(f"[STATE] Entering table mode (edge detected)")
     current_mode = "table_mode"
 
-    # Stop any movement
-    try:
-        px.stop()
-    except:
-        pass
+    # Stop any movement via socket
+    send_robot_command('stop')
 
     # Inform via system message
     speak_system_event("[SYSTEM: Du upptäckte en kant. Du står på ett bord. Säkerhetsläge - ingen körning.]")
@@ -619,62 +602,8 @@ def stop_app_camera():
 _app_debug_counter = 0
 
 def handle_app_input():
-    """Handle input from SunFounder phone app. Returns True if input received."""
-    global app_speed, _app_debug_counter
-
-    if controller is None:
-        return False
-
-    input_received = False
-    _app_debug_counter += 1
-
-    # Debug: log every 100th call to show we're polling
-    joystick = controller.get("K")
-    if _app_debug_counter % 100 == 0:
-        print(f"[APP] Poll #{_app_debug_counter}, K={joystick}", flush=True)
-
-    if joystick and (abs(joystick[0]) > 5 or abs(joystick[1]) > 5):
-        print(f"[APP] Joystick ACTIVE: {joystick}", flush=True)
-
-    # Button A = horn
-    if controller.get("A"):
-        try:
-            safe_play_sound(f"{SOUNDS_DIR}/car-double-horn.wav")
-        except:
-            pass
-        input_received = True
-
-    # Button B = reset camera
-    if controller.get("B"):
-        px.set_cam_pan_angle(0)
-        px.set_cam_tilt_angle(0)
-        input_received = True
-
-    # Joystick K = driving
-    joystick = controller.get("K")
-    if joystick:
-        dir_angle = joystick[0] * 30 / 100  # Map -100..100 to -30..30
-        app_speed = joystick[1]
-        px.set_dir_servo_angle(dir_angle)
-        if app_speed > 5:
-            px.forward(app_speed)
-            input_received = True
-        elif app_speed < -5:
-            px.backward(-app_speed)
-            input_received = True
-        else:
-            px.stop()
-
-    # Joystick Q = camera
-    camera_joy = controller.get("Q")
-    if camera_joy:
-        pan = max(-90, min(90, camera_joy[0]))
-        tilt = max(-35, min(65, camera_joy[1]))
-        px.set_cam_pan_angle(pan)
-        px.set_cam_tilt_angle(tilt)
-        input_received = True
-
-    return input_received
+    """No-op - app_control.py handles SunFounder phone app now."""
+    return False
 
 def speak_system_event(event: str):
     """Send system event to LLM and speak response."""
@@ -1841,28 +1770,12 @@ def transcribe_audio(wav_file):
 
 def reset_car_safe():
     """
-    Safely reset car to default state
-    Never crashes even if hardware fails
+    Safely reset car to default state via socket
+    Never crashes even if hardware/socket fails
     """
-    try:
-        px.stop()
-    except:
-        pass
-
-    try:
-        px.set_dir_servo_angle(0)
-    except:
-        pass
-
-    try:
-        px.set_cam_pan_angle(0)
-    except:
-        pass
-
-    try:
-        px.set_cam_tilt_angle(20)
-    except:
-        pass
+    send_robot_command('stop')
+    send_robot_command('camera_pan', {'angle': 0})
+    send_robot_command('camera_tilt', {'angle': 20})
 
 
 def exploration_thought_callback(description: str) -> str:
@@ -2172,7 +2085,7 @@ def main():
                     if time.time() - last_app_input_time > APP_MODE_TIMEOUT:
                         app_mode = False
                         stop_app_camera()
-                        px.stop()  # Stop motors when exiting app mode
+                        send_robot_command('stop')  # Stop motors when exiting app mode
                         print("[STATE] App control mode ended")
                         speak("Jag tar över igen.", allow_interrupt=False)
                         last_conversation_time = time.time()  # Reset conversation timer
