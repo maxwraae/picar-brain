@@ -483,6 +483,8 @@ try:
     controller = SunFounderController()
     controller.set_name("Picarx-Leon")
     controller.set_type("Picarx")
+    # Tell the app where to find video stream
+    controller.set("video", "http://192.168.1.101:9000/mjpg")
     controller.start()
     print("✓ SunFounder app ready (port 8765)")
 except Exception as e:

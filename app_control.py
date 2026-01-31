@@ -16,6 +16,7 @@ sleep(0.2)
 sc = SunFounderController()
 sc.set_name("Picarx-Leon")
 sc.set_type("Picarx")
+sc.set("video", "http://192.168.1.101:9000/mjpg")  # Tell app where video is
 sc.start()
 
 px = Picarx()
