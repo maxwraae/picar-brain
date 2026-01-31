@@ -460,6 +460,14 @@ except Exception as e:
     print(f"⚠️ SunFounder controller failed: {e}")
     controller = None
 
+# Pre-initialize vilib camera (must be done before cv2 touches camera)
+try:
+    Vilib.camera_start(vflip=False, hflip=False)
+    time.sleep(2)
+    print("✓ Camera initialized for app mode")
+except Exception as e:
+    print(f"⚠️ Camera init failed (app video won't work): {e}")
+
 last_manual_input_time = 0
 MANUAL_CONTROL_TIMEOUT = 5  # seconds
 
@@ -549,16 +557,15 @@ def exit_table_mode():
 # Phone app (SunFounder) takes over when connected
 
 def start_app_camera():
-    """Start camera stream for phone app."""
+    """Enable web display for phone app (camera already initialized at startup)."""
     global camera_active
     if not camera_active:
         try:
-            Vilib.camera_start(vflip=False, hflip=False)
             Vilib.display(local=False, web=True)
             camera_active = True
-            print("📹 App camera started (port 9000)")
+            print("📹 App camera stream enabled (port 9000)")
         except Exception as e:
-            print(f"⚠️ Camera start failed: {e}")
+            print(f"⚠️ Camera display failed: {e}")
 
 def stop_app_camera():
     """Stop camera stream."""
