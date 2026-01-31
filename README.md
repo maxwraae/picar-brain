@@ -149,6 +149,10 @@ Log rotates at 5MB, keeps 3 backups.
 
 ## Troubleshooting
 
+**Self-test shows "TTS test failed" warning:**
+- This is normal. The Piper TTS test fails but OpenAI TTS (primary) works fine.
+- The service continues despite the warning.
+
 **Service won't start:**
 ```bash
 tail -50 ~/picar-brain/voice.log   # Check log file
