@@ -2073,6 +2073,10 @@ def main():
     """
     global current_mode, last_conversation_time, app_mode, last_app_input_time
 
+    print("[DEBUG] main() starting!", flush=True)
+    import sys
+    sys.stdout.flush()
+
     print("=" * 50)
     print("PiCar Röstassistent - Redo för Leon!")
     print("=" * 50)
@@ -2382,6 +2386,9 @@ def main():
 # ============== RUN ==============
 
 if __name__ == "__main__":
+    print("[DEBUG] About to call main()...", flush=True)
+    import sys
+    sys.stdout.flush()
     try:
         main()
     except KeyboardInterrupt:
