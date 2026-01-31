@@ -437,7 +437,7 @@ else:
 
 # Initialize physical button (USR button on Robot HAT)
 try:
-    usr_button = Pin("SW")  # USR button - press=0, release=1
+    usr_button = Pin("SW", Pin.IN, pull=Pin.PULL_UP, active_state=False)  # USR button - press=0, release=1
     print("✓ Physical button ready (USR on Robot HAT)")
 except Exception as e:
     print(f"⚠️ Could not init button: {e}")
