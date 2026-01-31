@@ -1504,18 +1504,19 @@ def startup_self_test():
         print(f"✗ ({str(e)[:30]})")
         test_results.append(False)
 
-    # Test 4: OpenAI API
+    # Test 4: OpenAI API - quick check with timeout
     print("🌐 Testar OpenAI API...", end=" ", flush=True)
     try:
-        # Simple API call with short timeout
-        models = client.models.list()
+        import httpx
+        # Use short timeout to avoid blocking startup
+        test_client = OpenAI(api_key=OPENAI_API_KEY, timeout=httpx.Timeout(5.0))
+        models = test_client.models.list()
         if models:
             print("✓")
             test_results.append(True)
         else:
             print("✗ (ingen respons)")
             test_results.append(False)
-
     except Exception as e:
         print(f"✗ ({str(e)[:30]})")
         test_results.append(False)
