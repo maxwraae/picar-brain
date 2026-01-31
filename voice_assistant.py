@@ -616,21 +616,25 @@ def stop_app_camera():
         camera_active = False
         print("📹 App mode released camera")
 
+_app_debug_counter = 0
+
 def handle_app_input():
     """Handle input from SunFounder phone app. Returns True if input received."""
-    global app_speed
+    global app_speed, _app_debug_counter
 
     if controller is None:
-        print("[APP] No controller!", flush=True)
         return False
 
     input_received = False
+    _app_debug_counter += 1
 
-    # Debug: log raw joystick value (even zeros)
+    # Debug: log every 100th call to show we're polling
     joystick = controller.get("K")
-    if joystick:
-        if abs(joystick[0]) > 5 or abs(joystick[1]) > 5:
-            print(f"[APP] Joystick ACTIVE: {joystick}", flush=True)
+    if _app_debug_counter % 100 == 0:
+        print(f"[APP] Poll #{_app_debug_counter}, K={joystick}", flush=True)
+
+    if joystick and (abs(joystick[0]) > 5 or abs(joystick[1]) > 5):
+        print(f"[APP] Joystick ACTIVE: {joystick}", flush=True)
 
     # Button A = horn
     if controller.get("A"):
