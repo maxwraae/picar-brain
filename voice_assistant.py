@@ -97,7 +97,7 @@ import struct
 
 # PiCar imports
 from picarx import Picarx
-from robot_hat import Music, Pin
+from robot_hat import Music, Pin, utils
 from sunfounder_controller import SunFounderController
 from vilib import Vilib
 
@@ -259,17 +259,44 @@ os.popen("pinctrl set 20 op dh")
 
 # ============== INITIALIZATION ==============
 
-# Initialize car (using px from actions.py)
+# Reset MCU first (like app_control.py does) - this is the proper init sequence
+utils.reset_mcu()
+time.sleep(0.2)
+
+# Initialize car (using px from actions.py - already created at import)
 try:
-    time.sleep(0.5)
-    px.reset()
-    px.set_cam_tilt_angle(20)  # Default head position
+    # Don't call px.reset() or move servos here - it causes head shake on restart
     print("✓ PiCar initialized")
 except Exception as e:
     print(f"✗ Failed to initialize PiCar: {e}")
     sys.exit(1)
 
-music = Music()
+# Music initialization can fail if audio device is busy - don't crash
+try:
+    music = Music()
+    print("✓ Music initialized")
+except Exception as e:
+    print(f"⚠️ Music init failed (sounds won't work): {e}")
+    music = None
+
+def safe_play_sound(sound_file):
+    """Play a sound file safely - no crash if music unavailable."""
+    if music is None:
+        return
+    try:
+        safe_play_sound(sound_file)
+    except Exception as e:
+        print(f"⚠️ Sound failed: {e}")
+
+def safe_stop_sound():
+    """Stop playing sound safely."""
+    if music is None:
+        return
+    try:
+        safe_stop_sound()
+    except Exception:
+        pass
+
 led = Pin('LED')
 
 # ============== LED PATTERNS ==============
@@ -599,19 +626,21 @@ def handle_app_input():
     global app_speed
 
     if controller is None:
+        print("[APP] No controller!", flush=True)
         return False
 
     input_received = False
 
-    # Debug: log what we're getting from controller
+    # Debug: log raw joystick value (even zeros)
     joystick = controller.get("K")
-    if joystick and (abs(joystick[0]) > 5 or abs(joystick[1]) > 5):
-        print(f"[APP] Joystick: {joystick}")
+    if joystick:
+        if abs(joystick[0]) > 5 or abs(joystick[1]) > 5:
+            print(f"[APP] Joystick ACTIVE: {joystick}", flush=True)
 
     # Button A = horn
     if controller.get("A"):
         try:
-            music.sound_play_threading(f"{SOUNDS_DIR}/car-double-horn.wav")
+            safe_play_sound(f"{SOUNDS_DIR}/car-double-horn.wav")
         except:
             pass
         input_received = True
@@ -1330,7 +1359,7 @@ def chat_with_gpt(user_message):
             # Start thinking sound and LED pattern while waiting for GPT response
             led_thinking()  # Fast blink = processing
             try:
-                music.sound_play_threading(SOUND_THINKING)
+                safe_play_sound(SOUND_THINKING)
             except Exception as e:
                 print(f"⚠️ Thinking sound failed: {e}")
 
@@ -1347,7 +1376,7 @@ def chat_with_gpt(user_message):
                     first_token_received = True
                     led_talking()  # Slow pulse = speaking
                     try:
-                        music.sound_stop()
+                        safe_stop_sound()
                     except Exception as e:
                         print(f"⚠️ Stop thinking sound failed: {e}")
 
@@ -1962,7 +1991,7 @@ def listen_for_wake_word(timeout=None):
                     print(f"[CHAT] Wake word detected!")
                     # Play ding sound immediately for feedback
                     try:
-                        music.sound_play_threading(SOUND_DING)
+                        safe_play_sound(SOUND_DING)
                     except Exception as e:
                         print(f"⚠️ Ding sound failed: {e}")
                     return True
@@ -2090,7 +2119,7 @@ def main():
 
     # Play ready sound on startup
     try:
-        music.sound_play_threading(SOUND_READY)
+        safe_play_sound(SOUND_READY)
         time.sleep(0.5)  # Let the ready sound play before speaking
     except Exception as e:
         print(f"⚠️ Ready sound failed: {e}")
@@ -2236,7 +2265,7 @@ def main():
                     if usr_button is not None and usr_button.value() == 0:
                         print("[BUTTON] Physical button pressed!")
                         try:
-                            music.sound_play_threading(SOUND_DING)
+                            safe_play_sound(SOUND_DING)
                         except:
                             pass
                         # Wait for button release to avoid repeat triggers
@@ -2274,7 +2303,7 @@ def main():
                 print("❌ Inspelning misslyckades")
                 # Play retry sound for friendly feedback
                 try:
-                    music.sound_play_threading(SOUND_RETRY)
+                    safe_play_sound(SOUND_RETRY)
                 except Exception as e:
                     print(f"⚠️ Retry sound failed: {e}")
                 speak("Jag hörde inte, försök igen")
@@ -2304,7 +2333,7 @@ def main():
                 print(f"❓ Kunde inte höra något ({reason})")
                 # Play retry sound for friendly feedback
                 try:
-                    music.sound_play_threading(SOUND_RETRY)
+                    safe_play_sound(SOUND_RETRY)
                 except Exception as e:
                     print(f"⚠️ Retry sound failed: {e}")
                 speak("Jag hörde inte vad du sa. Försök igen!")
@@ -2359,7 +2388,7 @@ def main():
 
             # Play "your turn" sound - Apple-style state transition
             try:
-                music.sound_play_threading(SOUND_LISTENING)
+                safe_play_sound(SOUND_LISTENING)
             except Exception as e:
                 print(f"⚠️ Listening sound failed: {e}")
 
