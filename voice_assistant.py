@@ -440,7 +440,7 @@ conversation_history = []
 # State tracking for exploration mode
 current_mode = "listening"  # "listening", "conversation", "exploring", "table_mode"
 last_conversation_time = time.time()
-CONVERSATION_TIMEOUT = 30  # seconds before exploring
+CONVERSATION_TIMEOUT = 999999  # DISABLED - exploration off, app control priority
 
 # App control state (SunFounder phone app)
 app_mode = False
@@ -579,6 +579,11 @@ def handle_app_input():
         return False
 
     input_received = False
+
+    # Debug: log what we're getting from controller
+    joystick = controller.get("K")
+    if joystick and (abs(joystick[0]) > 5 or abs(joystick[1]) > 5):
+        print(f"[APP] Joystick: {joystick}")
 
     # Button A = horn
     if controller.get("A"):
@@ -2205,12 +2210,10 @@ def main():
                     # Follow-up detected - skip ding sound, go straight to recording
                     # (already printed "Fortsätter lyssna...")
                 elif porcupine:
-                    # Normal wake word mode - timeout allows exploration check
-                    print(f"⏳ Waiting for wake word (timeout: {CONVERSATION_TIMEOUT}s)...")
-                    detected = listen_for_wake_word(timeout=CONVERSATION_TIMEOUT)
+                    # Normal wake word mode - short timeout to poll app input frequently
+                    detected = listen_for_wake_word(timeout=0.5)
                     if not detected:
-                        # Timeout is normal - just loop back to check exploration
-                        print("⏰ Wake word timeout - checking exploration")
+                        # Timeout is normal - loop back to check app input
                         continue
                     # Reset failure counter on successful detection
                     consecutive_failures = 0
