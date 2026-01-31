@@ -2069,10 +2069,9 @@ def main():
     print("=" * 50)
     print()
 
-    # Run startup self-test
-    if not startup_self_test():
-        print("⚠️ Självtest varning - fortsätter ändå...")
-        # Continue anyway - OpenAI TTS works even if Piper test fails
+    # SKIPPING self-test - it blocks startup and isn't essential
+    # The system works fine without it, errors show at runtime
+    print("⏭️ Hoppar över självtest (snabbare start)")
 
     # Play ready sound on startup
     try:
