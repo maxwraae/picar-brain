@@ -466,6 +466,16 @@ try:
     Vilib.display(local=False, web=True)
     time.sleep(2)
     print("✓ Camera streaming on port 9000")
+
+    # Tell the SunFounder app where to find the video stream
+    if controller:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        controller.set('video', f'http://{local_ip}:9000/mjpg')
+        print(f"✓ Video URL: http://{local_ip}:9000/mjpg")
 except Exception as e:
     print(f"⚠️ Camera init failed (app video won't work): {e}")
 
