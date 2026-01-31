@@ -97,7 +97,7 @@ import struct
 
 # PiCar imports
 from picarx import Picarx
-from robot_hat import Music, Pin, utils
+from robot_hat import Music, Pin
 from sunfounder_controller import SunFounderController
 from vilib import Vilib
 
@@ -259,17 +259,10 @@ os.popen("pinctrl set 20 op dh")
 
 # ============== INITIALIZATION ==============
 
-# Reset MCU first (like app_control.py does) - this is the proper init sequence
-utils.reset_mcu()
-time.sleep(0.2)
-
-# Initialize car (using px from actions.py - already created at import)
-try:
-    # Don't call px.reset() or move servos here - it causes head shake on restart
-    print("✓ PiCar initialized")
-except Exception as e:
-    print(f"✗ Failed to initialize PiCar: {e}")
-    sys.exit(1)
+# Note: px already created via actions.py import above
+# Don't call utils.reset_mcu() - GPIO is already claimed from actions.py
+# Don't call px.reset() or move servos - causes head shake on restart
+print("✓ PiCar ready (via actions.py)")
 
 # Music initialization can fail if audio device is busy - don't crash
 try:
