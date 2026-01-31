@@ -10,4 +10,5 @@ venv/
 
 # Logs
 *.log
+voice.log*
 .DS_Store

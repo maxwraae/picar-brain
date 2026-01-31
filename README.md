@@ -1,239 +1,177 @@
-# PiCar Voice Assistant
+# PiCar Brain
 
-Voice-controlled robot car for Leon (9 years old). Swedish language, wake word activated.
+Voice-controlled robot car for Leon. Wake word "Jarvis", speaks Swedish.
 
 ## Quick Reference
 
 | Item | Value |
 |------|-------|
-| Hardware | Raspberry Pi 5 + PiCar-X chassis |
 | Pi hostname | `picar.local` |
 | Pi user | `pi` |
 | Pi password | `leon` |
-| Pi IP | `192.168.1.101` (may change) |
-| Project path on Pi | `/home/pi/picar-brain` |
-| App control service | `picar-app` (for SunFounder app) |
-| Voice service | `voice` (voice assistant) |
+| Project path | `/home/pi/picar-brain` |
+| Phone app service | `picar-app` (port 8765) |
+| Voice service | `voice` (Hey Jarvis) |
 | Wake word | "Jarvis" |
 
-## Connect to Pi
+## Fresh Install
+
+### 1. Flash SD Card
+
+Use Raspberry Pi Imager with **Raspberry Pi OS 64-bit Lite**.
+
+Configure in Imager settings:
+- Hostname: `picar`
+- Username: `pi`
+- Password: `leon`
+- WiFi: Your network
+- Enable SSH with password auth
+
+### 2. First Boot
+
+Insert SD card, power on, wait 2-3 minutes.
 
 ```bash
 ssh pi@picar.local
-# Password: leon
-
-# Or with sshpass:
-sshpass -p 'leon' ssh pi@picar.local
 ```
+
+### 3. Clone and Setup
+
+```bash
+cd ~
+git clone https://github.com/maxwraae/picar-brain.git
+cd picar-brain
+./setup.sh
+```
+
+### 4. Add API Keys
+
+```bash
+cp keys.example.py keys.py
+nano keys.py
+```
+
+Add your OpenAI API key and Picovoice access key.
+
+### 5. Test Hardware
+
+```bash
+./test.sh
+```
+
+Checks: I2C, camera, mic, speaker, Python imports, API keys.
+
+### 6. Reboot
+
+```bash
+sudo reboot
+```
+
+After reboot, voice service starts automatically.
 
 ## Deployment
 
-**From Mac (this repo at `~/picar-setup/picar-brain/`):**
+**Edit on Mac, push to GitHub:**
 ```bash
+cd ~/picar-setup/picar-brain
 git add -A && git commit -m "message" && git push
 ```
 
-**On the Pi:**
+**Pull on Pi:**
 ```bash
+ssh pi@picar.local
 cd ~/picar-brain && git pull
-sudo systemctl restart picar-app  # For SunFounder app
-# OR
-sudo systemctl restart voice      # For voice assistant
+sudo systemctl restart voice      # or picar-app
 ```
 
-**Check service status:**
+## Services
+
+| Service | What it does | Auto-start |
+|---------|--------------|------------|
+| `voice` | Voice assistant (Hey Jarvis) | Yes |
+| `picar-app` | Phone app control (SunFounder app) | No |
+
+**Note:** Only run ONE service at a time. Both control the same hardware.
+
+**Commands:**
 ```bash
-sudo systemctl status picar-app
-journalctl -u picar-app -f  # Live logs
+# Voice assistant (default)
+sudo systemctl status voice
+journalctl -u voice -f              # Live logs
+
+# Switch to phone app
+sudo systemctl stop voice
+sudo systemctl start picar-app      # Runs on port 8765 + 9000
 ```
-
-## SunFounder App Connection
-
-1. Open SunFounder PiCar-X app on phone
-2. Connect to same WiFi as Pi
-3. Enter Pi IP: `192.168.1.101` (or find with `ping picar.local`)
-4. App connects on port 8765
 
 ## Architecture
 
 ```
-User says "Jarvis"
-    → Porcupine wake word detection (local, Picovoice)
-    → *ding* sound + LED solid on
-
-User speaks
-    → PvRecorder captures audio with VAD (webrtcvad)
-    → Stops on 1.5s silence or 8s max
-
-Transcription
-    → OpenAI Whisper API (Swedish)
-    → Validates: min 2 words, filters noise patterns
-
-Processing
-    → *thinking* sound + LED fast blink
-    → GPT-5 mini streaming (Swedish robot personality)
-    → LED slow pulse when speaking
-
-Speech
-    → OpenAI TTS streaming (gpt-4o-mini-tts, voice: onyx)
-    → Volume boosted 3x for small speaker
-    → Plays via aplay to robothat device
-
-Follow-up
-    → 3 second window to continue without wake word
-    → Silent exit if noise detected (prevents loops)
+"Jarvis" (wake word)
+    → Porcupine detection (local)
+    → Recording with VAD (stops on silence)
+    → Whisper transcription (OpenAI)
+    → GPT response (Swedish robot personality)
+    → TTS playback (OpenAI)
+    → 3 second follow-up window
 ```
 
-## Key Files
+**Full details:** See [ARCHITECTURE.md](ARCHITECTURE.md) for complete system logic.
+
+## Files
 
 | File | Purpose |
 |------|---------|
-| `voice_assistant.py` | Main application |
-| `keys.py` | API keys (OPENAI_API_KEY, PICOVOICE_ACCESS_KEY) |
-| `sounds/` | Audio feedback (ding, thinking, retry, ready, listening) |
+| `voice_assistant.py` | Main voice assistant |
+| `app_control.py` | Phone app control |
+| `actions.py` | Robot movement actions |
+| `exploration.py` | Autonomous exploration mode |
+| `memory.py` | Conversation memory |
+| `keys.py` | API keys (not in git) |
+| `sounds/` | Audio feedback files |
 
-## Configuration Constants
+## Logs
 
-In `voice_assistant.py`:
+**Log file:** `/home/pi/picar-brain/voice.log`
 
-```python
-# Wake word
-WAKE_WORD = "jarvis"
+```bash
+# Watch live
+tail -f ~/picar-brain/voice.log
 
-# Voice Activity Detection
-VAD_AGGRESSIVENESS = 3      # 0-3, strictest
-SILENCE_THRESHOLD = 1.5     # seconds to stop recording
-MAX_RECORD_DURATION = 8     # seconds max
-FOLLOW_UP_WINDOW = 3.0      # seconds for follow-up
+# Last 50 lines
+tail -50 ~/picar-brain/voice.log
 
-# Speech validation (filters noise)
-MIN_WORDS_FOR_VALID_SPEECH = 2
-NOISE_TRANSCRIPTIONS = {...}  # Common Whisper hallucinations
-
-# TTS
-TTS_MODEL = "tts-1"
-TTS_VOICE = "onyx"          # Deep male voice
-TTS_VOLUME_BOOST = 3.0      # Amplify for small speaker
-USE_OPENAI_TTS = True       # False = use Piper (local, lower quality)
-
-# Hardware
-SPEAKER_DEVICE = "plughw:2,0"  # Robot-hat speaker (card 2)
-MIC_DEVICE = "plughw:3,0"      # USB mic (card 3)
+# Systemd logs
+journalctl -u voice -f
 ```
 
-## LED Patterns
-
-| State | Pattern |
-|-------|---------|
-| Waiting for wake word | Off |
-| Recording/Listening | Solid on |
-| Thinking/Processing | Fast blink |
-| Speaking | Slow pulse |
-
-## Sound Effects
-
-| Sound | When | Duration |
-|-------|------|----------|
-| ding.wav | Wake word detected | 0.12s |
-| thinking.wav | GPT processing | 3s (loops) |
-| retry.wav | Error/retry needed | 0.27s |
-| ready.wav | Startup complete | 0.5s |
-| listening.wav | Your turn to speak | 0.2s |
+Log rotates at 5MB, keeps 3 backups.
 
 ## Troubleshooting
 
-**Robot keeps talking to itself:**
-- Noise detection triggering follow-up
-- Check `MIN_WORDS_FOR_VALID_SPEECH` (should be 2+)
-- Check `VAD_AGGRESSIVENESS` (should be 3)
-- Check `FOLLOW_UP_WINDOW` (should be 3.0 or less)
-
-**Voice too quiet:**
-- Increase `TTS_VOLUME_BOOST` (currently 3.0)
-- Check `amixer` levels on Pi
-
-**Wake word not detected:**
-- Check Picovoice access key in `keys.py`
-- Check USB mic connected and detected
-- Try different wake words (alexa, computer, etc.)
-
 **Service won't start:**
 ```bash
-# Check logs
-journalctl -u voice -n 50
-
-# Test manually
-cd /home/pi/picar-brain
-python3 voice_assistant.py
+tail -50 ~/picar-brain/voice.log   # Check log file
+journalctl -u voice -n 50          # Check systemd
+cd ~/picar-brain && python3 voice_assistant.py   # Test manually
 ```
 
-**Git pull fails on Pi:**
+**Wake word not detected:**
+- Check Picovoice access key in keys.py
+- Check USB mic is connected: `arecord -l`
+
+**No sound output:**
+- Check speaker connection
+- Test: `aplay /usr/share/sounds/alsa/Front_Center.wav`
+
+**Git pull fails:**
 ```bash
-# If uncommitted changes on Pi
-cd /home/pi/picar-brain
-git stash
-git pull
-git stash pop  # if you want changes back
+git stash && git pull && git stash pop
 ```
 
-## Dependencies (on Pi)
+## API Keys Required
 
-```bash
-# Python packages
-pip install openai pvporcupine pvrecorder webrtcvad numpy
+1. **OpenAI API key** - for Whisper, GPT, TTS
+2. **Picovoice access key** - for wake word detection (free tier available)
 
-# System packages
-sudo apt install aplay piper  # piper for fallback TTS
-
-# Piper Swedish model
-mkdir -p ~/.local/share/piper
-# Download sv_SE-nst-medium.onnx
-```
-
-## Service Setup
-
-The systemd service file at `/etc/systemd/system/voice.service`:
-```ini
-[Unit]
-Description=PiCar Voice Assistant
-After=network.target sound.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/picar-brain
-ExecStart=/usr/bin/python3 /home/pi/picar-brain/voice_assistant.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable with:
-```bash
-sudo systemctl enable voice
-sudo systemctl start voice
-```
-
-## Robot Personality
-
-Swedish robot car named PiCar. Playful, energetic, loves making Leon happy. Says things like "Woohoo!", "Vroom vroom!". Short responses (1-2 sentences). Can do physical actions: forward, backward, spin, dance, nod, shake head.
-
-## API Costs
-
-Per conversation (~10 exchanges):
-- Whisper: ~$0.006 (1 min audio)
-- GPT-5 mini: ~$0.01
-- TTS: ~$0.015 (1000 chars)
-- **Total: ~$0.03/conversation**
-
-## History
-
-- Started with Piper TTS (local, mediocre Swedish)
-- Upgraded to OpenAI TTS streaming for better quality + lower latency
-- Added wake word (Porcupine) instead of push-to-talk
-- Added VAD for smart recording cutoff
-- Added follow-up conversation window
-- Added noise filtering to prevent false triggers
-- Added LED patterns for visual feedback
+Get Picovoice key at: https://console.picovoice.ai/
