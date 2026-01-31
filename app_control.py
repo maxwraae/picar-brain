@@ -31,11 +31,21 @@ User = "pi"
 UserHome = "/home/pi"
 SOUNDS_DIR = f"{UserHome}/picar-brain/sounds"
 
-music = Music()
+# Music can fail if audio device busy - don't crash
+try:
+    music = Music()
+except Exception as e:
+    print(f"⚠️ Music init failed: {e}")
+    music = None
 
 def horn():
-    utils.run_command("sudo killall pulseaudio")
-    music.sound_play_threading(f"{SOUNDS_DIR}/car-double-horn.wav")
+    if music is None:
+        return
+    try:
+        utils.run_command("sudo killall pulseaudio")
+        music.sound_play_threading(f"{SOUNDS_DIR}/car-double-horn.wav")
+    except Exception:
+        pass
 
 def avoid_obstacles():
     distance = px.get_distance()
