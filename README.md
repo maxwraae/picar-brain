@@ -33,6 +33,10 @@ Insert SD card, power on, wait 2-3 minutes.
 
 ```bash
 ssh pi@picar.local
+# Password: leon
+
+# Or from scripts/automation:
+sshpass -p "leon" ssh pi@picar.local "your command"
 ```
 
 ### 3. Clone and Setup
