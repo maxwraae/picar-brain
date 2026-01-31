@@ -79,9 +79,14 @@ echo "[6/7] Setting up directories..."
 sudo mkdir -p /opt/picar-x
 sudo chown pi:pi /opt/picar-x
 
-# 7. Install services
+# 7. Install services and ALSA config
 echo "[7/7] Installing services..."
 sudo cp services/*.service /etc/systemd/system/
+# ALSA dmix config for audio sharing between pygame and aplay
+if [ -f services/asound.conf ]; then
+    sudo cp services/asound.conf /etc/asound.conf
+    echo "  ALSA config installed"
+fi
 sudo systemctl daemon-reload
 # Only enable voice by default (voice and picar-app conflict - both control the hardware)
 sudo systemctl enable voice > /dev/null 2>&1

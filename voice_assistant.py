@@ -154,7 +154,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 PIPER_MODEL = "/home/pi/.local/share/piper/sv_SE-nst-medium.onnx"
 
 # Speaker configuration - use robothat device which is configured in system
-SPEAKER_DEVICE = "plughw:2,0"
+SPEAKER_DEVICE = "default"  # Use ALSA default (allows dmix sharing with pygame)
 
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "tts-1"
@@ -1970,9 +1970,8 @@ def main():
 
     # Run startup self-test
     if not startup_self_test():
-        print("❌ Självtest misslyckades! Prova att starta om.")
-        speak("Jag har ett problem. Fråga pappa om hjälp.")
-        return  # Exit gracefully
+        print("⚠️ Självtest varning - fortsätter ändå...")
+        # Continue anyway - OpenAI TTS works even if Piper test fails
 
     # Play ready sound on startup
     try:

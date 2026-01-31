@@ -7,6 +7,9 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/picar-brain
+Environment=SDL_AUDIODRIVER=alsa
+Environment=AUDIODEV=dmixer
+Environment=PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStartPre=/bin/sleep 5
 ExecStart=/usr/bin/python3 /home/pi/picar-brain/voice_assistant.py
 Restart=always
