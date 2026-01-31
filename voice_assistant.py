@@ -160,7 +160,7 @@ SPEAKER_DEVICE = "default"  # Use ALSA default (allows dmix sharing with pygame)
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "tts-1"
 TTS_VOICE = "onyx"  # Options: alloy, echo, fable, onyx, nova, shimmer (onyx = deep male)
-TTS_SPEED = 1.25  # Speed 0.25-4.0 (1.0 = normal, 1.25 = faster)
+TTS_SPEED = 1.1  # Speed 0.25-4.0 (1.0 = normal, 1.1 = slightly faster)
 TTS_INSTRUCTIONS = "Speak Swedish naturally with energy and playfulness. You are a friendly robot car talking to a 9-year-old boy."
 USE_OPENAI_TTS = True  # Set to False to use Piper instead
 
@@ -425,7 +425,7 @@ if PICOVOICE_ACCESS_KEY:
         porcupine = pvporcupine.create(
             access_key=PICOVOICE_ACCESS_KEY,
             keywords=[WAKE_WORD],
-            sensitivities=[0.7]  # Higher = more sensitive (default 0.5)
+            sensitivities=[0.85]  # Higher = more sensitive (default 0.5, 0.85 = easier to trigger)
         )
         print(f"✓ Wake word ready: '{WAKE_WORD}'")
     except Exception as e:
