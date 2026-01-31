@@ -2154,10 +2154,21 @@ def main():
                         except:
                             return False
 
+                    # App input check for exploration
+                    def check_app():
+                        if controller:
+                            joystick = controller.get("K")
+                            if joystick and (abs(joystick[0]) > 10 or abs(joystick[1]) > 10):
+                                return True
+                            if controller.get("A") or controller.get("B"):
+                                return True
+                        return False
+
                     result = explore(
                         max_duration=3600,
                         on_thought_callback=exploration_thought_callback,
-                        check_wake_word_callback=check_wake
+                        check_wake_word_callback=check_wake,
+                        check_app_input_callback=check_app
                     )
 
                     if result == "wake_word":
@@ -2165,6 +2176,12 @@ def main():
                         current_mode = "listening"
                         last_conversation_time = time.time()
                         skip_wake_word = True  # Skip wake word detection, go straight to recording
+                        continue
+                    elif result == "app_control":
+                        print(f"[STATE] App control detected during exploration")
+                        current_mode = "listening"
+                        last_conversation_time = time.time()
+                        # Don't skip wake word - let the app mode check at top of loop handle it
                         continue
                     elif result == "table_mode":
                         print(f"[STATE] Table mode detected during exploration")
