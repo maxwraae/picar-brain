@@ -476,14 +476,17 @@ try:
     print("[DEBUG] Camera started, starting display...", flush=True)
     Vilib.display(local=False, web=True)
     print("[DEBUG] Display started, sleeping 2s...", flush=True)
+    import sys
+    sys.stdout.flush()
     time.sleep(2)
-    print("✓ Camera streaming on port 9000")
-
-    # Video available on port 9000 - app will auto-discover
-    # Skipping IP detection and controller.set() - both block
-    print("✓ Video streaming on port 9000")
+    print("[DEBUG] Sleep done!", flush=True)
+    sys.stdout.flush()
+    print("✓ Camera streaming on port 9000", flush=True)
+    sys.stdout.flush()
+    print("✓ Video streaming on port 9000", flush=True)
+    sys.stdout.flush()
 except Exception as e:
-    print(f"⚠️ Camera init failed (app video won't work): {e}")
+    print(f"⚠️ Camera init failed (app video won't work): {e}", flush=True)
 
 last_manual_input_time = 0
 MANUAL_CONTROL_TIMEOUT = 5  # seconds
