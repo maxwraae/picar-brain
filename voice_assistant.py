@@ -489,6 +489,7 @@ try:
         local_ip = s.getsockname()[0]
         s.close()
         print(f"[DEBUG] Local IP: {local_ip}", flush=True)
+        print("[DEBUG] Setting video URL on controller...", flush=True)
         controller.set('video', f'http://{local_ip}:9000/mjpg')
         print(f"✓ Video URL: http://{local_ip}:9000/mjpg")
 except Exception as e:
