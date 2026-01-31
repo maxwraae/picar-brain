@@ -145,7 +145,7 @@ SOUND_LISTENING = f"{SOUNDS_DIR}/listening.wav"  # Your turn / ready to listen (
 # Wake word configuration (Picovoice)
 # Get free access key from https://console.picovoice.ai
 PICOVOICE_ACCESS_KEY = ""  # Set in keys.py or here
-WAKE_WORD = "computer"  # Built-in: alexa, americano, blueberry, bumblebee, computer, grapefruit, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
+WAKE_WORD = "jarvis"  # Built-in: alexa, americano, blueberry, bumblebee, computer, grapefruit, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
 
 # ============== CONFIG ==============
 
@@ -434,6 +434,14 @@ if PICOVOICE_ACCESS_KEY:
 else:
     print("✗ No Picovoice access key - using push-to-talk mode")
     print("  Get free key at https://console.picovoice.ai")
+
+# Initialize physical button (USR button on Robot HAT)
+try:
+    usr_button = Pin("SW")  # USR button - press=0, release=1
+    print("✓ Physical button ready (USR on Robot HAT)")
+except Exception as e:
+    print(f"⚠️ Could not init button: {e}")
+    usr_button = None
 
 # Conversation history for Chat Completions
 conversation_history = []
@@ -2222,16 +2230,29 @@ def main():
                     # Follow-up detected - skip ding sound, go straight to recording
                     # (already printed "Fortsätter lyssna...")
                 elif porcupine:
-                    # Normal wake word mode - short timeout to poll app input frequently
-                    detected = listen_for_wake_word(timeout=0.5)
-                    if not detected:
-                        # Timeout is normal - loop back to check app input
-                        continue
-                    # Reset failure counter on successful detection
-                    consecutive_failures = 0
-                    # Ding sound already played in listen_for_wake_word()
-                    # Small delay before recording
-                    time.sleep(0.3)
+                    # Check physical button first (instant trigger)
+                    if usr_button is not None and usr_button.value() == 0:
+                        print("[BUTTON] Physical button pressed!")
+                        try:
+                            music.sound_play_threading(SOUND_DING)
+                        except:
+                            pass
+                        # Wait for button release to avoid repeat triggers
+                        while usr_button.value() == 0:
+                            time.sleep(0.05)
+                        consecutive_failures = 0
+                        time.sleep(0.3)
+                    else:
+                        # Normal wake word mode - short timeout to poll app input frequently
+                        detected = listen_for_wake_word(timeout=0.5)
+                        if not detected:
+                            # Timeout is normal - loop back to check app input
+                            continue
+                        # Reset failure counter on successful detection
+                        consecutive_failures = 0
+                        # Ding sound already played in listen_for_wake_word()
+                        # Small delay before recording
+                        time.sleep(0.3)
                 else:
                     # Fallback: push to talk
                     input("\n🎤 Tryck ENTER och prata... ")
