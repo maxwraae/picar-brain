@@ -488,6 +488,10 @@ try:
 except Exception as e:
     print(f"⚠️ Camera init failed (app video won't work): {e}", flush=True)
 
+print("[DEBUG] Camera init block done, continuing module load...", flush=True)
+import sys
+sys.stdout.flush()
+
 last_manual_input_time = 0
 MANUAL_CONTROL_TIMEOUT = 5  # seconds
 
@@ -996,7 +1000,12 @@ def get_full_system_prompt() -> str:
     return SYSTEM_PROMPT
 
 # Initialize conversation with system prompt
+print("[DEBUG] About to initialize conversation history...", flush=True)
+import sys
+sys.stdout.flush()
 conversation_history.append({"role": "system", "content": get_full_system_prompt()})
+print("[DEBUG] Conversation history initialized!", flush=True)
+sys.stdout.flush()
 
 # ============== TTS FUNCTIONS ==============
 
