@@ -1,0 +1,17 @@
+[Unit]
+Description=PiCar Voice Assistant (Socket Mode)
+After=network.target picar-app.service
+Wants=picar-app.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/picar-brain
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/python3 /home/pi/picar-brain/voice_assistant.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

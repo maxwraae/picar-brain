@@ -9,6 +9,9 @@ from picarx import Picarx
 from robot_hat import utils, Music
 from vilib import Vilib
 from time import sleep
+import socket
+import threading
+import json
 
 utils.reset_mcu()
 sleep(0.2)
@@ -38,6 +41,51 @@ try:
 except Exception as e:
     print(f"⚠️ Music init failed: {e}")
     music = None
+
+def start_command_socket(px):
+    """Socket server for voice commands"""
+    def handle_client(conn, px):
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+            try:
+                cmd = json.loads(data.decode('utf-8'))
+                action = cmd.get('action')
+                params = cmd.get('params', {})
+
+                if action == 'forward':
+                    px.forward(params.get('speed', 30))
+                elif action == 'backward':
+                    px.backward(params.get('speed', 30))
+                elif action == 'turn_left':
+                    px.set_dir_servo_angle(-30)
+                elif action == 'turn_right':
+                    px.set_dir_servo_angle(30)
+                elif action == 'stop':
+                    px.forward(0)
+                    px.set_dir_servo_angle(0)
+                elif action == 'camera_pan':
+                    px.set_cam_pan_angle(params.get('angle', 0))
+                elif action == 'camera_tilt':
+                    px.set_cam_tilt_angle(params.get('angle', 0))
+
+                conn.send(b'OK')
+            except Exception as e:
+                conn.send(f'ERROR:{e}'.encode())
+        conn.close()
+
+    def server_thread():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('127.0.0.1', 5555))
+        sock.listen(5)
+        print("✓ Command socket ready (port 5555)")
+        while True:
+            conn, _ = sock.accept()
+            threading.Thread(target=handle_client, args=(conn, px), daemon=True).start()
+
+    threading.Thread(target=server_thread, daemon=True).start()
 
 def horn():
     if music is None:
@@ -93,11 +141,13 @@ def line_track():
 
 def main():
     global speed, last_line_state
-    
+
+    start_command_socket(px)
+
     Vilib.camera_start(vflip=False, hflip=False)
     Vilib.display(local=False, web=True)
     sleep(2)
-    
+
     print("PiCar App Control started!")
     print("WebSocket: port 8765")
     print("Video: http://192.168.1.101:9000/mjpg")
