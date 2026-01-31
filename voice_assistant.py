@@ -445,7 +445,7 @@ CONVERSATION_TIMEOUT = 999999  # DISABLED - exploration off, app control priorit
 # App control state (SunFounder phone app)
 app_mode = False
 camera_active = False
-APP_MODE_TIMEOUT = 5  # seconds of no input to exit app mode
+APP_MODE_TIMEOUT = 60  # seconds of no input to exit app mode
 last_app_input_time = 0
 app_speed = 0
 
