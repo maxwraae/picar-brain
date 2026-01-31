@@ -71,7 +71,15 @@ import threading
 import random
 from keys import OPENAI_API_KEY
 from memory import add_observation, format_memories_for_prompt
-from exploration import explore, describe_scene, capture_frame
+# Exploration disabled until ported to socket architecture
+# from exploration import explore, describe_scene, capture_frame
+def explore(*args, **kwargs):
+    """Stub - exploration disabled until socket port."""
+    return "disabled"
+def describe_scene(*args, **kwargs):
+    return None
+def capture_frame(*args, **kwargs):
+    return None
 # Socket-based control - no direct GPIO access
 import socket
 import json
