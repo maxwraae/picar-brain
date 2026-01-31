@@ -309,7 +309,8 @@ def reset_head():
 def explore(
     max_duration: int = MAX_EXPLORE_DURATION,
     on_thought_callback=None,
-    check_wake_word_callback=None
+    check_wake_word_callback=None,
+    check_app_input_callback=None
 ) -> str:
     """
     Cute curious exploration - HEAD LEADS, BODY FOLLOWS.
@@ -348,6 +349,12 @@ def explore(
                 print("[EXPLORE] Wake word detected!")
                 stop()
                 return "wake_word"
+
+            # === APP INPUT CHECK ===
+            if check_app_input_callback and check_app_input_callback():
+                print("[EXPLORE] App input detected!")
+                stop()
+                return "app_control"
 
             # === FULL OBSERVATION (variable timing) ===
             if now - last_observation_time > next_observation_interval:
