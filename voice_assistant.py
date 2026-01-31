@@ -1964,12 +1964,10 @@ class WakeWordListener:
 def listen_for_wake_word(timeout=None):
     """
     Listen for wake word using Picovoice Porcupine.
-    Returns True when wake word detected, False on error/timeout.
+    Returns: "wake_word" when detected, "app_input" if joystick used, False on error/timeout.
     """
     if porcupine is None:
-        return True  # Fallback to push-to-talk
-
-    print(f"[CHAT] Listening for wake word (timeout: {timeout}s)" if timeout else "[CHAT] Listening for wake word")
+        return "wake_word"  # Fallback to push-to-talk
 
     try:
         with WakeWordListener(porcupine) as listener:
@@ -1983,17 +1981,23 @@ def listen_for_wake_word(timeout=None):
                 if timeout and (time.time() - start_time) > timeout:
                     return False
 
+                # Check for joystick input while listening for wake word
+                if controller:
+                    joystick = controller.get("K")
+                    if joystick and (abs(joystick[0]) > 10 or abs(joystick[1]) > 10):
+                        print(f"[APP] Joystick detected during wake word: {joystick}")
+                        return "app_input"
+
                 pcm = listener.read()
                 result = porcupine.process(pcm)
 
                 if result >= 0:
                     print(f"[CHAT] Wake word detected!")
-                    # Play ding sound immediately for feedback
                     try:
                         safe_play_sound(SOUND_DING)
                     except Exception as e:
                         print(f"⚠️ Ding sound failed: {e}")
-                    return True
+                    return "wake_word"
 
     except Exception as e:
         print(f"⚠️ Wake word error: {e}")
@@ -2273,15 +2277,22 @@ def main():
                         consecutive_failures = 0
                         time.sleep(0.3)
                     else:
-                        # Normal wake word mode - short timeout to poll app input frequently
-                        detected = listen_for_wake_word(timeout=0.5)
-                        if not detected:
-                            # Timeout is normal - loop back to check app input
+                        # Normal wake word mode - also checks joystick input
+                        result = listen_for_wake_word(timeout=0.5)
+                        if result == "app_input":
+                            # Joystick detected - activate app mode immediately
+                            app_mode = True
+                            last_app_input_time = time.time()
+                            print("[STATE] App control mode activated via joystick")
+                            start_app_camera()
+                            speak("Ok, du styr!", allow_interrupt=False)
                             continue
-                        # Reset failure counter on successful detection
+                        if not result or result == False:
+                            # Timeout is normal - loop back
+                            continue
+                        # Wake word detected
                         consecutive_failures = 0
                         # Ding sound already played in listen_for_wake_word()
-                        # Small delay before recording
                         time.sleep(0.3)
                 else:
                     # Fallback: push to talk
