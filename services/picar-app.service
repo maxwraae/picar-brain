@@ -1,0 +1,16 @@
+[Unit]
+Description=PiCar-X Phone App Control
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Environment=LOGNAME=pi
+Environment=USER=pi
+WorkingDirectory=/home/pi/picar-brain
+ExecStart=/usr/bin/python3 /home/pi/picar-brain/app_control.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

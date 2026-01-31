@@ -16,6 +16,49 @@ Hardened with:
 import os
 os.getlogin = lambda: "pi"
 
+# ============== LOGGING SETUP ==============
+import logging
+from logging.handlers import RotatingFileHandler
+
+LOG_FILE = "/home/pi/picar-brain/voice.log"
+LOG_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+LOG_BACKUP_COUNT = 3  # Keep 3 old log files
+
+# Create logger
+logger = logging.getLogger("voice")
+logger.setLevel(logging.DEBUG)
+
+# File handler (rotating)
+file_handler = RotatingFileHandler(
+    LOG_FILE, maxBytes=LOG_MAX_SIZE, backupCount=LOG_BACKUP_COUNT
+)
+file_handler.setLevel(logging.DEBUG)
+file_format = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+file_handler.setFormatter(file_format)
+
+# Console handler (for journald)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_format = logging.Formatter('%(message)s')
+console_handler.setFormatter(console_format)
+
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+def log(msg, level="info"):
+    """Log helper - logs to file + console"""
+    if level == "debug":
+        logger.debug(msg)
+    elif level == "warning":
+        logger.warning(msg)
+    elif level == "error":
+        logger.error(msg)
+    else:
+        logger.info(msg)
+
+log(f"=== Voice Assistant Starting ===")
+log(f"Log file: {LOG_FILE}")
+
 from openai import OpenAI
 import subprocess
 import json
@@ -111,10 +154,10 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 PIPER_MODEL = "/home/pi/.local/share/piper/sv_SE-nst-medium.onnx"
 
 # Speaker configuration - use robothat device which is configured in system
-SPEAKER_DEVICE = "robothat"
+SPEAKER_DEVICE = "plughw:2,0"
 
 # OpenAI TTS settings (primary TTS engine)
-TTS_MODEL = "gpt-4o-mini-tts"
+TTS_MODEL = "tts-1"
 TTS_VOICE = "onyx"  # Options: alloy, echo, fable, onyx, nova, shimmer (onyx = deep male)
 TTS_SPEED = 1.25  # Speed 0.25-4.0 (1.0 = normal, 1.25 = faster)
 TTS_INSTRUCTIONS = "Speak Swedish naturally with energy and playfulness. You are a friendly robot car talking to a 9-year-old boy."
@@ -133,7 +176,7 @@ def find_usb_mic_arecord():
     try:
         result = subprocess.run(
             "arecord -l",
-            shell=True,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=5
@@ -196,7 +239,7 @@ if MIC_DEVICE is None:
         # Quick test if device exists
         test = subprocess.run(
             f"arecord -D {test_device} -d 0.1 -f S16_LE -r 16000 -c 1 /tmp/test_mic.wav 2>/dev/null",
-            shell=True,
+            shell=False,
             timeout=2
         )
         if test.returncode == 0:
@@ -965,7 +1008,7 @@ def speak_piper(text):
             # Generate speech with Piper using file input
             result = subprocess.run(
                 f'cat /tmp/picar_text.txt | piper --model {PIPER_MODEL} --output_file /tmp/picar_speech.wav',
-                shell=True,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=SUBPROCESS_TIMEOUT
@@ -994,7 +1037,7 @@ def speak_piper(text):
             # Play using aplay with retry for device busy
             play_result = subprocess.run(
                 f'aplay -D {SPEAKER_DEVICE} /tmp/picar_speech.wav',
-                shell=True,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=SUBPROCESS_TIMEOUT
@@ -1274,7 +1317,7 @@ def startup_self_test():
         test_wav = "/tmp/picar_mic_test.wav"
         result = subprocess.run(
             f"arecord -D {MIC_DEVICE} -d 1 -f S16_LE -r 16000 -c 1 {test_wav}",
-            shell=True,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=5
@@ -1300,7 +1343,7 @@ def startup_self_test():
         test_results.append(False)
 
     # Test 2: Piper TTS
-    print("🗣️  Testar Piper TTS...", end=" ", flush=True)
+    print("🗣️  Testar TTS (espeak)...", end=" ", flush=True)
     try:
         test_text = "test"
         test_tts_wav = "/tmp/picar_tts_test.wav"
@@ -1311,13 +1354,13 @@ def startup_self_test():
 
         result = subprocess.run(
             f'cat /tmp/picar_tts_test.txt | piper --model {PIPER_MODEL} --output_file {test_tts_wav}',
-            shell=True,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=5
         )
 
-        if result.returncode == 0 and os.path.exists(test_tts_wav):
+        if result.returncode == 0:
             size = os.path.getsize(test_tts_wav)
             if size > 100:
                 print("✓")
@@ -1342,7 +1385,7 @@ def startup_self_test():
         # Just verify the speaker device exists without playing audio
         result = subprocess.run(
             f'aplay -D {SPEAKER_DEVICE} --dump-hw-params /dev/null 2>&1 || aplay -L | grep -q {SPEAKER_DEVICE}',
-            shell=True,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=5
@@ -1559,7 +1602,7 @@ def record_audio(duration=4):
 
             result = subprocess.run(
                 f"arecord -D {MIC_DEVICE} -d {duration} -f S16_LE -r 16000 -c 1 {wav_file}",
-                shell=True,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=duration + 5  # Add buffer to duration

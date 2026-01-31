@@ -29,12 +29,13 @@ LINE_TRACK_ANGLE_OFFSET = 20
 
 User = "pi"
 UserHome = "/home/pi"
+SOUNDS_DIR = f"{UserHome}/picar-brain/sounds"
 
 music = Music()
 
 def horn():
     utils.run_command("sudo killall pulseaudio")
-    music.sound_play_threading(f"{UserHome}/picar-x/sounds/car-double-horn.wav")
+    music.sound_play_threading(f"{SOUNDS_DIR}/car-double-horn.wav")
 
 def avoid_obstacles():
     distance = px.get_distance()
