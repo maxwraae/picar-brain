@@ -424,7 +424,8 @@ if PICOVOICE_ACCESS_KEY:
     try:
         porcupine = pvporcupine.create(
             access_key=PICOVOICE_ACCESS_KEY,
-            keywords=[WAKE_WORD]
+            keywords=[WAKE_WORD],
+            sensitivities=[0.7]  # Higher = more sensitive (default 0.5)
         )
         print(f"✓ Wake word ready: '{WAKE_WORD}'")
     except Exception as e:
