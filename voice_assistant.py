@@ -99,6 +99,7 @@ import struct
 from picarx import Picarx
 from robot_hat import Music, Pin
 from sunfounder_controller import SunFounderController
+from vilib import Vilib
 
 # ============== CONSTANTS ==============
 
@@ -441,10 +442,22 @@ current_mode = "listening"  # "listening", "conversation", "exploring", "table_m
 last_conversation_time = time.time()
 CONVERSATION_TIMEOUT = 30  # seconds before exploring
 
-# Initialize controller (do once at startup)
+# App control state (SunFounder phone app)
+app_mode = False
+camera_active = False
+APP_MODE_TIMEOUT = 5  # seconds of no input to exit app mode
+last_app_input_time = 0
+app_speed = 0
+
+# Initialize controller for phone app (SunFounder app)
 try:
     controller = SunFounderController()
-except:
+    controller.set_name("Picarx-Leon")
+    controller.set_type("Picarx")
+    controller.start()
+    print("✓ SunFounder app ready (port 8765)")
+except Exception as e:
+    print(f"⚠️ SunFounder controller failed: {e}")
     controller = None
 
 last_manual_input_time = 0
@@ -531,6 +544,81 @@ def exit_table_mode():
     print(f"[STATE] Exiting table mode, returning to listening")
     current_mode = "listening"
     speak_system_event("[SYSTEM: Du är på golvet igen. Normal rörelse återställd.]")
+
+# ============== APP CONTROL MODE ==============
+# Phone app (SunFounder) takes over when connected
+
+def start_app_camera():
+    """Start camera stream for phone app."""
+    global camera_active
+    if not camera_active:
+        try:
+            Vilib.camera_start(vflip=False, hflip=False)
+            Vilib.display(local=False, web=True)
+            camera_active = True
+            print("📹 App camera started (port 9000)")
+        except Exception as e:
+            print(f"⚠️ Camera start failed: {e}")
+
+def stop_app_camera():
+    """Stop camera stream."""
+    global camera_active
+    if camera_active:
+        try:
+            Vilib.camera_close()
+            camera_active = False
+            print("📹 App camera stopped")
+        except:
+            pass
+
+def handle_app_input():
+    """Handle input from SunFounder phone app. Returns True if input received."""
+    global app_speed
+
+    if controller is None:
+        return False
+
+    input_received = False
+
+    # Button A = horn
+    if controller.get("A"):
+        try:
+            music.sound_play_threading(f"{SOUNDS_DIR}/car-double-horn.wav")
+        except:
+            pass
+        input_received = True
+
+    # Button B = reset camera
+    if controller.get("B"):
+        px.set_cam_pan_angle(0)
+        px.set_cam_tilt_angle(0)
+        input_received = True
+
+    # Joystick K = driving
+    joystick = controller.get("K")
+    if joystick:
+        dir_angle = joystick[0] * 30 / 100  # Map -100..100 to -30..30
+        app_speed = joystick[1]
+        px.set_dir_servo_angle(dir_angle)
+        if app_speed > 5:
+            px.forward(app_speed)
+            input_received = True
+        elif app_speed < -5:
+            px.backward(-app_speed)
+            input_received = True
+        else:
+            px.stop()
+
+    # Joystick Q = camera
+    camera_joy = controller.get("Q")
+    if camera_joy:
+        pan = max(-90, min(90, camera_joy[0]))
+        tilt = max(-35, min(65, camera_joy[1]))
+        px.set_cam_pan_angle(pan)
+        px.set_cam_tilt_angle(tilt)
+        input_received = True
+
+    return input_received
 
 def speak_system_event(event: str):
     """Send system event to LLM and speak response."""
@@ -1961,7 +2049,7 @@ def main():
     Say "Hey Jarvis" (or your custom wake word) to activate.
     Falls back to push-to-talk if wake word model fails to load.
     """
-    global current_mode, last_conversation_time
+    global current_mode, last_conversation_time, app_mode, last_app_input_time
 
     print("=" * 50)
     print("PiCar Röstassistent - Redo för Leon!")
@@ -2005,15 +2093,40 @@ def main():
 
     while not shutdown_requested:
         try:
+            # ============== APP MODE CHECK ==============
+            # Phone app takes priority over voice when connected
+            if controller:
+                input_received = handle_app_input()
+
+                if input_received:
+                    last_app_input_time = time.time()
+
+                    # Enter app mode if not already
+                    if not app_mode:
+                        app_mode = True
+                        print("[STATE] App control mode activated")
+                        start_app_camera()
+                        speak("Ok, du styr!", allow_interrupt=False)
+
+                # Check app mode timeout
+                if app_mode:
+                    if time.time() - last_app_input_time > APP_MODE_TIMEOUT:
+                        app_mode = False
+                        stop_app_camera()
+                        px.stop()  # Stop motors when exiting app mode
+                        print("[STATE] App control mode ended")
+                        speak("Jag tar över igen.", allow_interrupt=False)
+                        last_conversation_time = time.time()  # Reset conversation timer
+                    else:
+                        time.sleep(0.05)  # Small sleep in app mode
+                        continue  # Skip wake word detection while in app mode
+
             # Check if we should skip wake word (after interrupt)
             if not skip_wake_word:
                 # LED off = waiting for wake word (or follow-up)
                 led_idle()
 
-                # Check for manual control
-                if check_manual_control():
-                    handle_manual_control()
-                    continue  # Restart loop after manual control ends
+                # Note: Manual control now handled by app_mode at top of loop
 
                 # Check for exploration mode after timeout
                 time_since_conversation = time.time() - last_conversation_time
