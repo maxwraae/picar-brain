@@ -2077,14 +2077,16 @@ def main():
     import sys
     sys.stdout.flush()
 
-    print("=" * 50)
-    print("PiCar Röstassistent - Redo för Leon!")
-    print("=" * 50)
-    print()
+    print("=" * 50, flush=True)
+    print("PiCar Röstassistent - Redo för Leon!", flush=True)
+    print("=" * 50, flush=True)
+    print(flush=True)
+    sys.stdout.flush()
 
     # SKIPPING self-test - it blocks startup and isn't essential
     # The system works fine without it, errors show at runtime
-    print("⏭️ Hoppar över självtest (snabbare start)")
+    print("⏭️ Hoppar över självtest (snabbare start)", flush=True)
+    sys.stdout.flush()
 
     # Play ready sound on startup
     try:
