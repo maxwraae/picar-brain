@@ -479,19 +479,9 @@ try:
     time.sleep(2)
     print("✓ Camera streaming on port 9000")
 
-    # Tell the SunFounder app where to find the video stream
-    # NOTE: controller.set('video', ...) blocks indefinitely, so we skip it
-    # The app should auto-discover video on port 9000
-    if controller:
-        print("[DEBUG] Getting local IP...", flush=True)
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(2.0)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        # SKIPPING controller.set('video', ...) - it blocks forever
-        print(f"✓ Video available at: http://{local_ip}:9000/mjpg")
+    # Video available on port 9000 - app will auto-discover
+    # Skipping IP detection and controller.set() - both block
+    print("✓ Video streaming on port 9000")
 except Exception as e:
     print(f"⚠️ Camera init failed (app video won't work): {e}")
 
