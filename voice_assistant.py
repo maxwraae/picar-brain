@@ -176,7 +176,7 @@ def find_usb_mic_arecord():
     try:
         result = subprocess.run(
             "arecord -l",
-            shell=False,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=5
@@ -239,7 +239,7 @@ if MIC_DEVICE is None:
         # Quick test if device exists
         test = subprocess.run(
             f"arecord -D {test_device} -d 0.1 -f S16_LE -r 16000 -c 1 /tmp/test_mic.wav 2>/dev/null",
-            shell=False,
+            shell=True,
             timeout=2
         )
         if test.returncode == 0:
@@ -1008,7 +1008,7 @@ def speak_piper(text):
             # Generate speech with Piper using file input
             result = subprocess.run(
                 f'cat /tmp/picar_text.txt | piper --model {PIPER_MODEL} --output_file /tmp/picar_speech.wav',
-                shell=False,
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=SUBPROCESS_TIMEOUT
@@ -1037,7 +1037,7 @@ def speak_piper(text):
             # Play using aplay with retry for device busy
             play_result = subprocess.run(
                 f'aplay -D {SPEAKER_DEVICE} /tmp/picar_speech.wav',
-                shell=False,
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=SUBPROCESS_TIMEOUT
@@ -1317,7 +1317,7 @@ def startup_self_test():
         test_wav = "/tmp/picar_mic_test.wav"
         result = subprocess.run(
             f"arecord -D {MIC_DEVICE} -d 1 -f S16_LE -r 16000 -c 1 {test_wav}",
-            shell=False,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=5
@@ -1354,7 +1354,7 @@ def startup_self_test():
 
         result = subprocess.run(
             f'cat /tmp/picar_tts_test.txt | piper --model {PIPER_MODEL} --output_file {test_tts_wav}',
-            shell=False,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=5
@@ -1385,7 +1385,7 @@ def startup_self_test():
         # Just verify the speaker device exists without playing audio
         result = subprocess.run(
             f'aplay -D {SPEAKER_DEVICE} --dump-hw-params /dev/null 2>&1 || aplay -L | grep -q {SPEAKER_DEVICE}',
-            shell=False,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=5
@@ -1602,7 +1602,7 @@ def record_audio(duration=4):
 
             result = subprocess.run(
                 f"arecord -D {MIC_DEVICE} -d {duration} -f S16_LE -r 16000 -c 1 {wav_file}",
-                shell=False,
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=duration + 5  # Add buffer to duration
