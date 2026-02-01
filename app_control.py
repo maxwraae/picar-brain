@@ -37,6 +37,20 @@ SOUNDS_DIR = f"{UserHome}/picar-brain/sounds"
 
 # Voice service owns the speaker - no audio init here
 
+def send_to_voice(text):
+    """Forward app speech to voice assistant."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect(('127.0.0.1', 5556))
+        sock.send(text.encode('utf-8'))
+        sock.close()
+        print(f"[APP] Sent to Jarvis: {text}")
+        return True
+    except Exception as e:
+        print(f"[APP] Voice send failed: {e}")
+        return False
+
 def start_command_socket(px):
     """Socket server for voice commands"""
     def handle_client(conn, px):
@@ -152,26 +166,10 @@ def main():
             px.set_cam_pan_angle(0)
             px.set_cam_tilt_angle(0)
         
-        # Speech commands
+        # Speech commands - route to voice assistant (Jarvis)
         speak = sc.get("speak")
         if speak:
-            speak = speak.lower()
-            if "forward" in speak:
-                px.forward(speed if speed else 30)
-            elif "backward" in speak or "back" in speak:
-                px.backward(speed if speed else 30)
-            elif "left" in speak:
-                px.set_dir_servo_angle(-30)
-                px.forward(60)
-                sleep(1.2)
-                px.set_dir_servo_angle(0)
-            elif "right" in speak:
-                px.set_dir_servo_angle(30)
-                px.forward(60)
-                sleep(1.2)
-                px.set_dir_servo_angle(0)
-            elif "stop" in speak:
-                px.stop()
+            send_to_voice(speak)  # Route to Jarvis instead of keyword matching
         
         # Line track / Avoid obstacles switches
         line_track_switch = sc.get("I")
