@@ -84,6 +84,41 @@ def capture_frame(*args, **kwargs):
 import socket
 import json
 
+# ============== APP SPEECH SOCKET ==============
+# Receives speech from SunFounder phone app and routes to GPT
+
+app_speech_queue = []
+
+def start_app_speech_socket():
+    """Socket server to receive speech from app."""
+    def handle_client(conn):
+        try:
+            data = conn.recv(1024)
+            if data:
+                text = data.decode('utf-8').strip()
+                if text:
+                    app_speech_queue.append(text)
+                    log(f"[APP] Received speech: {text}")
+        except Exception as e:
+            log(f"[APP] Socket handle error: {e}", "warning")
+        finally:
+            conn.close()
+
+    def server_thread():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('127.0.0.1', 5556))
+        sock.listen(5)
+        print("✓ App speech socket ready (port 5556)")
+        while True:
+            try:
+                conn, _ = sock.accept()
+                threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
+            except Exception as e:
+                log(f"[APP] Socket accept error: {e}", "warning")
+
+    threading.Thread(target=server_thread, daemon=True).start()
+
 # ============== SIGNAL HANDLING ==============
 
 shutdown_requested = False
@@ -167,8 +202,8 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # Piper TTS model path (Swedish) - kept as fallback
 PIPER_MODEL = "/home/pi/.local/share/piper/sv_SE-nst-medium.onnx"
 
-# Speaker configuration - use robothat device which is configured in system
-SPEAKER_DEVICE = "default"  # Use ALSA default (allows dmix sharing with pygame)
+# Speaker configuration - Google Voice HAT is card 2
+SPEAKER_DEVICE = "plughw:2,0"
 
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "tts-1"
@@ -289,7 +324,7 @@ def safe_play_sound(sound_file):
         # Kill any current playback
         safe_stop_sound()
         _current_sound_process = subprocess.Popen(
-            ['aplay', '-D', 'plughw:1,0', sound_file],
+            ['aplay', '-D', SPEAKER_DEVICE, sound_file],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -974,6 +1009,9 @@ sys.stdout.flush()
 conversation_history.append({"role": "system", "content": get_full_system_prompt()})
 print("[DEBUG] Conversation history initialized!", flush=True)
 sys.stdout.flush()
+
+# Start app speech socket server
+start_app_speech_socket()
 
 # ============== TTS FUNCTIONS ==============
 
@@ -2076,6 +2114,46 @@ def main():
 
     while not shutdown_requested:
         try:
+            # ============== APP SPEECH QUEUE ==============
+            # Process speech from SunFounder phone app (routed via socket)
+            if app_speech_queue:
+                app_text = app_speech_queue.pop(0)
+                print(f"[APP] Processing speech from app: {app_text}")
+
+                # Play ding to acknowledge
+                try:
+                    safe_play_sound(SOUND_DING)
+                except:
+                    pass
+                time.sleep(0.2)
+
+                # Update conversation tracking
+                last_conversation_time = time.time()
+                current_mode = "conversation"
+
+                # Process through GPT (same as wake word triggered speech)
+                led_thinking()
+                print("💭 Tänker...")
+                answer, actions = chat_with_gpt(app_text)
+
+                # Execute actions
+                if actions:
+                    for action_name in actions:
+                        if action_name in ACTIONS:
+                            execute_action(action_name, table_mode=(current_mode == "table_mode"))
+                            time.sleep(0.3)
+
+                reset_car_safe()
+                led_idle()
+
+                # Play listening sound
+                try:
+                    safe_play_sound(SOUND_LISTENING)
+                except:
+                    pass
+
+                continue  # Go back to top of loop
+
             # ============== APP MODE CHECK ==============
             # Phone app takes priority over voice when connected
             if controller:
