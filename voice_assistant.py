@@ -277,31 +277,34 @@ os.popen("pinctrl set 20 op dh")
 # Don't call px.reset() or move servos - causes head shake on restart
 print("✓ PiCar ready (via actions.py)")
 
-# Music initialization can fail if audio device is busy - don't crash
-try:
-    music = Music()
-    print("✓ Music initialized")
-except Exception as e:
-    print(f"⚠️ Music init failed (sounds won't work): {e}")
-    music = None
+# Audio playback using aplay (voice owns the speaker)
+import subprocess
+
+_current_sound_process = None
 
 def safe_play_sound(sound_file):
-    """Play a sound file safely - no crash if music unavailable."""
-    if music is None:
-        return
+    """Play a sound file using aplay."""
+    global _current_sound_process
     try:
-        safe_play_sound(sound_file)
+        # Kill any current playback
+        safe_stop_sound()
+        _current_sound_process = subprocess.Popen(
+            ['aplay', '-D', 'plughw:1,0', sound_file],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
     except Exception as e:
         print(f"⚠️ Sound failed: {e}")
 
 def safe_stop_sound():
-    """Stop playing sound safely."""
-    if music is None:
-        return
-    try:
-        safe_stop_sound()
-    except Exception:
-        pass
+    """Stop playing sound."""
+    global _current_sound_process
+    if _current_sound_process:
+        try:
+            _current_sound_process.terminate()
+        except Exception:
+            pass
+        _current_sound_process = None
 
 led = Pin('LED')
 
