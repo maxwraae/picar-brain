@@ -66,6 +66,7 @@ import time
 import os
 import sys
 import signal
+import re
 import numpy as np
 import threading
 import random
@@ -202,8 +203,28 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # Piper TTS model path (Swedish) - kept as fallback
 PIPER_MODEL = "/home/pi/.local/share/piper/sv_SE-nst-medium.onnx"
 
-# Speaker configuration - Google Voice HAT is card 2
-SPEAKER_DEVICE = "plughw:2,0"
+# ============== SPEAKER AUTO-DETECTION ==============
+
+def find_speaker_device():
+    """Find Google Voice HAT speaker by name, not card number."""
+    try:
+        result = subprocess.run(['aplay', '-l'], capture_output=True, text=True)
+        for line in result.stdout.split('\n'):
+            if 'googlevoice' in line.lower() or 'voicehat' in line.lower():
+                match = re.search(r'card (\d+):', line)
+                if match:
+                    device = f"plughw:{match.group(1)},0"
+                    print(f"✓ Found speaker: {device}")
+                    return device
+    except Exception as e:
+        print(f"⚠️ Speaker detection failed: {e}")
+    return None
+
+# Auto-detect speaker device
+SPEAKER_DEVICE = find_speaker_device()
+if SPEAKER_DEVICE is None:
+    SPEAKER_DEVICE = "plughw:1,0"  # Fallback
+    print(f"⚠️ Using fallback speaker: {SPEAKER_DEVICE}")
 
 # OpenAI TTS settings (primary TTS engine)
 TTS_MODEL = "tts-1"
@@ -316,20 +337,21 @@ print("✓ PiCar ready (via actions.py)")
 import subprocess
 
 _current_sound_process = None
+_audio_lock = threading.Lock()
 
 def safe_play_sound(sound_file):
-    """Play a sound file using aplay."""
+    """Play a sound file using aplay with thread safety."""
     global _current_sound_process
-    try:
-        # Kill any current playback
-        safe_stop_sound()
-        _current_sound_process = subprocess.Popen(
-            ['aplay', '-D', SPEAKER_DEVICE, sound_file],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-    except Exception as e:
-        print(f"⚠️ Sound failed: {e}")
+    with _audio_lock:
+        try:
+            safe_stop_sound()
+            _current_sound_process = subprocess.Popen(
+                ['aplay', '-D', SPEAKER_DEVICE, sound_file],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            print(f"⚠️ Sound failed: {e}")
 
 def safe_stop_sound():
     """Stop playing sound."""
@@ -536,20 +558,25 @@ print("✓ Voice assistant in socket mode")
 
 # ============== SOCKET CONTROL ==============
 
-def send_robot_command(action, params=None):
-    """Send command to app_control.py via socket"""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1.0)
-        sock.connect(('127.0.0.1', 5555))
-        cmd = json.dumps({'action': action, 'params': params or {}})
-        sock.send(cmd.encode('utf-8'))
-        response = sock.recv(1024).decode()
-        sock.close()
-        return response == 'OK'
-    except Exception as e:
-        log(f"Socket command failed: {e}", "warning")
-        return False
+def send_robot_command(action, params=None, max_retries=3):
+    """Send command to app_control with retry and backoff."""
+    for attempt in range(max_retries):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            sock.connect(('127.0.0.1', 5555))
+            cmd = json.dumps({'action': action, 'params': params or {}})
+            sock.send(cmd.encode('utf-8'))
+            response = sock.recv(1024).decode()
+            sock.close()
+            if response == 'OK':
+                return True
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(0.2 * (attempt + 1))
+            else:
+                log(f"[SOCKET] Failed after {max_retries} attempts: {e}", "warning")
+    return False
 
 SOCKET_ACTIONS = {
     'forward': lambda p: send_robot_command('forward', {'speed': p.get('speed', 30)}),
