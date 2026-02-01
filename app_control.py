@@ -6,7 +6,7 @@ os.getlogin = lambda: "pi"  # Patch for systemd
 
 from sunfounder_controller import SunFounderController
 from picarx import Picarx
-from robot_hat import utils, Music
+from robot_hat import utils
 from vilib import Vilib
 from time import sleep
 import socket
@@ -35,12 +35,7 @@ User = "pi"
 UserHome = "/home/pi"
 SOUNDS_DIR = f"{UserHome}/picar-brain/sounds"
 
-# Music can fail if audio device busy - don't crash
-try:
-    music = Music()
-except Exception as e:
-    print(f"⚠️ Music init failed: {e}")
-    music = None
+# Voice service owns the speaker - no audio init here
 
 def start_command_socket(px):
     """Socket server for voice commands"""
@@ -88,13 +83,8 @@ def start_command_socket(px):
     threading.Thread(target=server_thread, daemon=True).start()
 
 def horn():
-    if music is None:
-        return
-    try:
-        utils.run_command("sudo killall pulseaudio")
-        music.sound_play_threading(f"{SOUNDS_DIR}/car-double-horn.wav")
-    except Exception:
-        pass
+    # Horn disabled - voice service owns the speaker
+    pass
 
 def avoid_obstacles():
     distance = px.get_distance()
